@@ -18,7 +18,7 @@
 
 1. Устанавливаем **UniSat** и создаем новый кошелек.
 2. Пополняем баланс BTC (выбираем **Legacy P2PKH**).
-3. Для пополнения можно воспользоваться [Symbiosis](https://app.symbiosis.finance/) (комиссия ~3$ в сети Ethereum).
+3. Для пополнения можно воспользоваться [Symbiosis](https://app.symbiosis.finance/) (комиссия ~3$ в сети Ethereum). за информацию спасибо @jonnyboii 
 
 ---
 
