@@ -37,13 +37,4 @@ if [ -d "$MINER_DIR" ]; then
 else
     echo "⬇️ Загружаем майнер..."
     wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
-    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-    if [ ! -d "$MINER_DIR" ]; then
-        echo "❗ Не удалось разархивировать майнер."
-        exit 1
-    fi
-fi
-
-# Настройка конфига
-echo ""
-echo "===== Настрой
+    tar -
