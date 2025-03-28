@@ -17,12 +17,10 @@ PACKAGES="jq curl wget unzip nano"
 install_packages() {
     echo "Проверка необходимых пакетов..."
     for pkg in $PACKAGES; do
-        if dpkg -l | grep -q " $pkg "; then
-            echo "$pkg уже установлен."
-        else
+        if ! dpkg -l | grep -q " $pkg "; then
             echo "$pkg не найден, устанавливаем..."
-            sudo apt update
-            sudo apt install -y "$pkg"
+            apt update
+            apt install -y "$pkg"
             if [ $? -ne 0 ]; then
                 echo "Ошибка: Не удалось установить $pkg."
                 exit 1
@@ -31,7 +29,6 @@ install_packages() {
     done
 }
 
-# Установка пакетов
 install_packages
 
 # Проверка установки майнера
@@ -39,44 +36,12 @@ if [ -d "$MINER_DIR" ]; then
     echo "Майнер уже установлен, пропускаем установку."
 else
     echo "Майнер не найден, начинаем установку..."
-    sudo apt update && sudo apt upgrade -y
+    apt update && apt upgrade -y
     wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
-    if [ $? -ne 0 ]; then
-        echo "Ошибка: Не удалось скачать файл."
-        exit 1
-    fi
     tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-    if [ $? -ne 0 ]; then
-        echo "Ошибка: Не удалось разархивировать файл."
-        exit 1
-    fi
-    # Проверка и переход в директорию майнера
-    if [ -d "$MINER_DIR" ]; then
-        cd "$MINER_DIR" || {
-            echo "Ошибка: Не удалось перейти в директорию $MINER_DIR."
-            exit 1
-        }
-    else
-        echo "Ошибка: Директория майнера $MINER_DIR не существует."
-        exit 1
-    fi
 fi
 
-# --- Функция очистки при прерывании ---
-cleanup() {
-    echo "Прерывание скрипта..."
-    if pgrep -f "popmd" > /dev/null; then
-        echo "Останавливаем майнер..."
-        pkill -f "popmd"
-    fi
-    echo "Выход..."
-    exit 0
-}
-
-# Устанавливаем обработчик прерывания (Ctrl+C)
-trap cleanup INT
-
-# --- Настройка конфига при каждом запуске скрипта ---
+# Настройка конфига
 echo ""
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
@@ -94,30 +59,39 @@ export POPM_BTC_CHAIN_NAME=mainnet
 EOF
 chmod +x "$CONFIG_FILE"
 echo "✅ Конфиг обновлен!"
-echo "---------------------------"
-cat "$CONFIG_FILE"
-echo "---------------------------"
-
-# Загружаем параметры из нового конфига
 source "$CONFIG_FILE"
 
-# --- Ожидание подходящего газа для запуска майнера ---
-echo "Ожидаем газ ниже или равный $POPM_STATIC_FEE... для запуска майнера."
-while true; do
-    gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
-    if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
-        sleep 30
-        continue
-    fi
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+# Функция запуска майнера с проверкой газа
+start_miner() {
+    while true; do
+        gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
+        if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+            sleep 30
+            continue
+        fi
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
 
-    if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
-        echo "Газ в норме, запускаем майнер..."
-        cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
-        break
-    else
-        echo "Газ слишком высокий, продолжаем ожидание..."
-        sleep 30
-    fi
-done
+        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+            echo "Газ в норме, запускаем майнер..."
+            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
+            miner_pid=$!
+            wait $miner_pid
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу. Перезапуск после проверки газа..."
+        else
+            echo "Газ слишком высокий, продолжаем ожидание..."
+            sleep 30
+        fi
+    done
+}
+
+# Обработчик Ctrl+C
+cleanup() {
+    echo "Прерывание скрипта..."
+    pkill -f "popmd"
+    exit 0
+}
+trap cleanup INT
+
+# Старт
+start_miner
