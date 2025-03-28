@@ -4,41 +4,39 @@ echo "=== HEMI Miner Installer ==="
 
 # Обновление системы
 sudo apt update && sudo apt upgrade -y
-sudo apt install wget unzip nano curl screen jq -y
+sudo apt install wget unzip nano curl screen -y
 
 # Скачиваем майнер
 wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
 tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
 cd heminetwork_v1.0.0_linux_amd64
 
-# Проверка текущего газа с помощью API
-get_gas() {
-  echo $(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee')
-}
+# Запрос минимального значения газа от пользователя
+read -p "Введите минимальное значение газа (например, 2): " min_gas
 
-# Мониторинг газа с задержкой
-current_gas=$(get_gas)
-echo ""
-echo "===== Текущий газ ====="
-echo "Текущий газ: ${current_gas} sat/vB"
-echo "-----------------------"
+# Запуск майнера
+echo "Запуск майнера..."
+screen -S hemi_miner -d -m ./popmd
 
-# Пауза в 30 секунд перед следующим запросом
-while [[ "$current_gas" -gt 50 ]]; do
-  echo "Газ слишком высок! Проверяем снова..."
-  sleep 30
-  current_gas=$(get_gas)
-  echo "Текущий газ: ${current_gas} sat/vB"
+# Проверка газа после запуска майнера
+while true; do
+    current_gas=$(curl -s https://api.hemi.network/gas/ | jq -r '.gas | tonumber')
+    echo "Текущий газ: $current_gas sat/vB"
+    
+    if [ "$current_gas" -ge "$min_gas" ]; then
+        echo "Газ в норме, продолжаем работу..."
+        break
+    else
+        echo "Газ слишком низкий, проверяем через 30 секунд..."
+        sleep 30
+    fi
 done
 
-echo "Газ в норме, продолжаем установку..."
-
-# Меню настройки
+# Настройка конфигурации
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
 read -p "Введите POPM_STATIC_FEE (например, 4): " static_fee
 
-# Генерация конфигурационного файла
 cat > config.sh <<EOF
 export POPM_BTC_PRIVKEY=${btc_key}
 export POPM_STATIC_FEE=${static_fee}
@@ -49,19 +47,17 @@ EOF
 chmod +x config.sh
 
 echo "✅ Конфиг успешно создан!"
-echo "---------------------------"
 cat config.sh
-echo "---------------------------"
 
-# Меню выбора действия
+# Меню
 while true; do
     echo ""
-    echo "1) Запустить майнер"
+    echo "1) Запустить мониторинг газа"
     echo "2) Редактировать конфиг (nano)"
     echo "3) Выход"
     read -p "Выберите действие: " choice
     case $choice in
-        1) source config.sh && ./popmd ;;
+        1) echo "Мониторинг газа активен...";;
         2) nano config.sh ;;
         3) exit ;;
         *) echo "Неверный ввод!";;
