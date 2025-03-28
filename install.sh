@@ -5,6 +5,7 @@ echo "=== HEMI Miner Installer ==="
 # Проверка на существование папки с майнером
 if [ -d "heminetwork_v1.0.0_linux_amd64" ]; then
     echo "❗ Майнер уже установлен. Пропускаем установку."
+    cd heminetwork_v1.0.0_linux_amd64
 else
     # Обновление системы
     sudo apt update && sudo apt upgrade -y
