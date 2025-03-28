@@ -4,12 +4,16 @@ echo "=== HEMI Miner Installer ==="
 
 # Параметры
 MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
-MINER_PID=""
-MINER_SCREEN="hemi_miner"
+
+# Проверка прав root
+if [ "$EUID" -ne 0 ]; then
+    echo "Ошибка: Скрипт должен быть запущен с правами root (используйте sudo)."
+    exit 1
+fi
 
 # Установка необходимых пакетов
-sudo apt update
-sudo apt install jq curl screen -y
+sudo apt update && sudo apt upgrade -y
+sudo apt install wget unzip nano curl jq screen -y
 
 # Проверка установки майнера
 if [ -d "$MINER_DIR" ]; then
@@ -17,14 +21,23 @@ if [ -d "$MINER_DIR" ]; then
 else
     echo "Майнер не найден, начинаем установку..."
 
-    # Обновление системы
-    sudo apt update && sudo apt upgrade -y
-    sudo apt install wget unzip nano curl jq screen -y
-
     # Скачиваем майнер
     wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    if [ $? -ne 0 ]; then
+        echo "Ошибка: Не удалось скачать файл."
+        exit 1
+    fi
+
     tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-    cd heminetwork_v1.0.0_linux_amd64
+    if [ $? -ne 0 ]; then
+        echo "Ошибка: Не удалось разархивировать файл."
+        exit 1
+    fi
+
+    cd "$MINER_DIR" || {
+        echo "Ошибка: Не удалось перейти в директорию $MINER_DIR."
+        exit 1
+    }
 fi
 
 # --- Меню ---
