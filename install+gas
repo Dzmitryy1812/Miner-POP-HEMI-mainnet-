@@ -1,46 +1,34 @@
 #!/bin/bash
 
-# ==== Параметры ====
+# === Параметры ===
 MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
 CONFIG_FILE="$MINER_DIR/config.sh"
 MONITOR_SCREEN="tracker"
-MINER_SCREEN="hemi_miner"
-PACKAGES="jq curl screen wget unzip nano"
 
-# ==== Проверка прав ====
+# === Проверка root ===
 if [ "$EUID" -ne 0 ]; then
-    echo "Ошибка: Запустите скрипт с правами root (sudo)."
+    echo "Ошибка: Запусти скрипт с sudo!"
     exit 1
 fi
 
-# ==== Установка пакетов ====
-install_packages() {
-    echo "Проверка пакетов..."
-    for pkg in $PACKAGES; do
-        if ! dpkg -l | grep -q " $pkg "; then
-            echo "Устанавливаем $pkg..."
-            apt update && apt install -y "$pkg"
-        fi
-    done
-}
-install_packages
+# === Проверка пакетов ===
+apt update -y
+apt install -y jq curl screen wget unzip nano
 
-# ==== Установка майнера ====
+# === Установка майнера, если нет ===
 if [ ! -d "$MINER_DIR" ]; then
-    echo "Устанавливаем майнер..."
+    echo "Майнер не найден. Устанавливаем..."
     wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
     tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-    mv heminetwork_v1.0.0_linux_amd64 "$HOME/"
+else
+    echo "Майнер уже установлен."
 fi
 
-# ==== Настройка конфига ====
+# === Настройка конфига ===
+echo ""
 echo "===== Настройка майнера ====="
-read -p "Введите приватный ключ BTC: " btc_key
+read -p "Введите ваш приватный ключ BTC: " btc_key
 read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
-if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-    echo "Ошибка: POPM_STATIC_FEE должно быть числом!"
-    exit 1
-fi
 
 cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
@@ -52,45 +40,52 @@ EOF
 
 chmod +x "$CONFIG_FILE"
 source "$CONFIG_FILE"
-echo "✅ Конфиг сохранен."
 
-# ==== Функция мониторинга ====
-monitor_gas() {
-    echo "▶️ Запуск мониторинга газа..."
+echo "✅ Конфиг сохранен."
+echo ""
+
+# === Функция мониторинга ===
+monitor() {
+    echo "▶️ Мониторинг газа запущен..."
+    MINER_RUNNING=0
+
     while true; do
         gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee')
-        if [[ ! "$gas_price" =~ ^[0-9]+$ ]]; then
-            echo "❗️ Не удалось получить газ. Повтор через 30 сек."
-            sleep 30
-            continue
-        fi
-        echo "$(date '+%H:%M:%S') Газ: $gas_price sat/vB (порог: $POPM_STATIC_FEE)"
+        if [[ "$gas_price" =~ ^[0-9]+$ ]]; then
+            echo "$(date '+%H:%M:%S') - Газ: $gas_price sat/vB (порог: $POPM_STATIC_FEE)"
 
-        miner_running=$(screen -ls | grep "$MINER_SCREEN")
-        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
-            if [ -z "$miner_running" ]; then
-                echo "✅ Газ норм ($gas_price), запускаем майнер..."
-                screen -dmS "$MINER_SCREEN" bash -c "cd $MINER_DIR && source config.sh && ./popmd"
+            if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+                if [ "$MINER_RUNNING" -eq 0 ]; then
+                    echo "✅ Газ нормальный ($gas_price), запускаем майнер..."
+                    cd "$MINER_DIR" && source config.sh && ./popmd &
+                    MINER_PID=$!
+                    MINER_RUNNING=1
+                fi
             else
-                echo "✅ Майнер уже работает."
+                if [ "$MINER_RUNNING" -eq 1 ]; then
+                    echo "❌ Газ высокий ($gas_price), останавливаем майнер..."
+                    kill "$MINER_PID" 2>/dev/null
+                    MINER_RUNNING=0
+                fi
             fi
         else
-            if [ -n "$miner_running" ]; then
-                echo "❗️ Газ высокий ($gas_price), останавливаем майнер..."
-                screen -S "$MINER_SCREEN" -X quit
-            else
-                echo "❗️ Майнер уже остановлен."
-            fi
+            echo "$(date '+%H:%M:%S') - Не удалось получить цену газа."
         fi
         sleep 30
     done
 }
 
-# ==== Запуск мониторинга ====
+# === Запуск мониторинга в screen ===
 echo ""
 echo "🚀 Запускаем мониторинг в screen '$MONITOR_SCREEN'..."
-screen -dmS "$MONITOR_SCREEN" bash -c "$(declare -f monitor_gas); monitor_gas"
+screen -dmS "$MONITOR_SCREEN" bash -c "bash $0 monitor"
 
 echo "✅ Всё готово!"
 echo "ℹ️ Для просмотра мониторинга: screen -r $MONITOR_SCREEN"
 echo "ℹ️ Чтобы выйти из screen без остановки: Ctrl+A, затем D"
+
+# === Если запуск с параметром monitor ===
+if [ "$1" = "monitor" ]; then
+    source "$CONFIG_FILE"
+    monitor
+fi
