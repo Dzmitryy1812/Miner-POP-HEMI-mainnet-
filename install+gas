@@ -60,11 +60,6 @@ cleanup() {
         echo "Останавливаем майнер..."
         pkill -f "popmd"
     fi
-    if screen -list | grep -q "."; then
-        echo "Закрываем все сессии screen..."
-        screen -ls | grep Detached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
-        screen -ls | grep Attached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
-    fi
     echo "Выход..."
     exit 0
 }
@@ -72,132 +67,73 @@ cleanup() {
 # Устанавливаем обработчик прерывания (Ctrl+C)
 trap cleanup INT
 
-# --- Функция мониторинга газа ---
-monitor_gas() {
-    while true; do
-        gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
-        if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-            echo "Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..." >> gas_monitor.log
-            sleep 30
-            continue
-        fi
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)" >> gas_monitor.log
-        
-        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
-            if ! pgrep -f "popmd" > /dev/null; then
-                echo "Газ в пределах нормы ($gas_price <= $POPM_STATIC_FEE), майнер должен быть запущен вручную для логов в основном окне." >> gas_monitor.log
-            fi
-        else
-            if pgrep -f "popmd" > /dev/null; then
-                echo "Газ превышает порог ($gas_price > $POPM_STATIC_FEE), останавливаем майнер..." >> gas_monitor.log
-                pkill -f "popmd"
-                echo "Майнер остановлен" >> gas_monitor.log
-            fi
-        fi
-        sleep 30
-    done
-}
-
-# --- Меню выбора ---
-cd "$MINER_DIR" || exit 1
-
-while true; do
+# --- Настройка конфига при первом запуске ---
+if [ ! -f "$CONFIG_FILE" ]; then
     echo ""
-    echo "===== Меню управления майнером ====="
-    echo "1) Запустить майнер (логи в основном окне) и мониторинг газа (в screen)"
-    echo "2) Редактировать конфиг (nano)"
-    echo "3) Выход"
-    read -p "Выберите действие: " choice
-    case $choice in
-        1)
-            # Закрываем все существующие сессии screen
-            if screen -list | grep -q "."; then
-                echo "Закрываем все существующие сессии screen..."
-                screen -ls | grep Detached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
-                screen -ls | grep Attached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
-            fi
-
-            # Запрашиваем приватный ключ и порог газа
-            echo ""
-            echo "===== Настройка майнера ====="
-            read -p "Введите ваш приватный ключ BTC: " btc_key
-            read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
-            if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-                echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
-                continue
-            fi
-
-            # Обновляем конфиг
-            cat > "$CONFIG_FILE" <<EOF
+    echo "===== Настройка майнера ====="
+    read -p "Введите ваш приватный ключ BTC: " btc_key
+    read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
+    if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
+        echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
+        exit 1
+    fi
+    cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
 export POPM_BTC_PRIVKEY=${btc_key}
 export POPM_STATIC_FEE=${static_fee}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
-            chmod +x "$CONFIG_FILE"
-            source "$CONFIG_FILE"
-            echo "✅ Конфиг обновлен!"
+    chmod +x "$CONFIG_FILE"
+    echo "✅ Конфиг создан!"
+    echo "---------------------------"
+    cat "$CONFIG_FILE"
+    echo "---------------------------"
+else
+    echo "Конфиг уже существует, загружаем параметры..."
+    source "$CONFIG_FILE"
+fi
 
-            # Запускаем мониторинг газа в screen
-            echo "Запускаем мониторинг газа в screen (gas_monitor)..."
-            screen -dmS gas_monitor bash -c "cd $MINER_DIR && $0 monitor_gas"
-            sleep 2
-            if screen -list | grep -q "gas_monitor"; then
-                echo "Мониторинг газа запущен. Логи мониторинга в $MINER_DIR/gas_monitor.log"
-                echo "Для просмотра: screen -r gas_monitor"
-            else
-                echo "Ошибка: Не удалось запустить мониторинг газа!"
-                continue
-            fi
+# --- Основной цикл мониторинга и запуска майнера ---
+cd "$MINER_DIR" || exit 1
 
-            # Проверяем текущий газ и состояние майнера
-            gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
-            if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-                echo "Ошибка: Не удалось получить данные о газе. Майнер не будет запущен."
-            elif [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
-                if pgrep -f "popmd" > /dev/null; then
-                    echo "Майнер уже работает (PID: $(pgrep -f "popmd" | head -n 1))."
-                    read -p "Остановить и перезапустить майнер для отображения логов в основном окне? (y/n): " restart_choice
-                    if [ "$restart_choice" = "y" ] || [ "$restart_choice" = "Y" ]; then
-                        echo "Останавливаем текущий майнер..."
-                        pkill -f "popmd"
-                        sleep 2
-                        echo "Запускаем майнер в основном окне..."
-                        source "$CONFIG_FILE" && ./popmd
-                    else
-                        echo "Майнер продолжает работать без отображения логов здесь."
-                    fi
-                else
-                    echo "Газ в норме ($gas_price <= $POPM_STATIC_FEE), запускаем майнер в основном окне..."
-                    source "$CONFIG_FILE" && ./popmd
+echo "Запускаем мониторинг газа и управление майнером..."
+while true; do
+    gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
+    if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+        sleep 30
+        continue
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+
+    if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+        if ! pgrep -f "popmd" > /dev/null; then
+            echo "Газ в пределах нормы ($gas_price <= $POPM_STATIC_FEE), запускаем майнер в основном окне..."
+            source "$CONFIG_FILE" && ./popmd
+            echo "Майнер завершил работу или был остановлен. Возвращаемся к мониторингу..."
+        else
+            echo "Майнер уже работает (PID: $(pgrep -f "popmd" | head -n 1)), ждем его завершения или остановки..."
+            # Ждем, пока майнер завершится
+            while pgrep -f "popmd" > /dev/null; do
+                sleep 10
+                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
+                if [ "$gas_price" -gt "$POPM_STATIC_FEE" ]; then
+                    echo "Газ превысил порог ($gas_price > $POPM_STATIC_FEE), останавливаем майнер..."
+                    pkill -f "popmd"
+                    break
                 fi
-            else
-                echo "Газ слишком высокий ($gas_price > $POPM_STATIC_FEE), майнер не будет запущен."
-                echo "Мониторинг в screen остановит майнер, если он работает, и вы сможете запустить его позже."
-            fi
-            ;;
-        2)
-            nano "$CONFIG_FILE"
-            chmod +x "$CONFIG_FILE"
-            echo "Конфиг отредактирован. Перезапустите мониторинг и майнер, если нужно."
-            source "$CONFIG_FILE"
-            ;;
-        3)
-            if pgrep -f "popmd" > /dev/null; then
-                echo "Останавливаем майнер перед выходом..."
-                pkill -f "popmd"
-            fi
-            if screen -list | grep -q "."; then
-                echo "Закрываем все сессии screen..."
-                screen -ls | grep Detached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
-                screen -ls | grep Attached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
-            fi
-            echo "Выход из программы"
-            exit 0
-            ;;
-        *)
-            echo "Неверный ввод! Выберите 1, 2 или 3."
-            ;;
-    esac
+            done
+            echo "Майнер остановлен или завершился, продолжаем мониторинг..."
+        fi
+    else
+        if pgrep -f "popmd" > /dev/null; then
+            echo "Газ превышает порог ($gas_price > $POPM_STATIC_FEE), останавливаем майнер..."
+            pkill -f "popmd"
+            echo "Майнер остановлен"
+        else
+            echo "Газ слишком высокий ($gas_price > $POPM_STATIC_FEE), ждем снижения..."
+        fi
+    fi
+    sleep 30
 done
