@@ -2,14 +2,19 @@
 
 echo "=== HEMI Miner Installer ==="
 
-# Обновление системы
-sudo apt update && sudo apt upgrade -y
-sudo apt install wget unzip nano curl screen -y
+# Проверка на существование папки с майнером
+if [ -d "heminetwork_v1.0.0_linux_amd64" ]; then
+    echo "❗ Майнер уже установлен. Пропускаем установку."
+else
+    # Обновление системы
+    sudo apt update && sudo apt upgrade -y
+    sudo apt install wget unzip nano curl screen -y
 
-# Скачиваем майнер
-wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
-tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-cd heminetwork_v1.0.0_linux_amd64
+    # Скачиваем майнер
+    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+    cd heminetwork_v1.0.0_linux_amd64
+fi
 
 # --- Меню ---
 
@@ -34,9 +39,17 @@ echo "---------------------------"
 cat config.sh
 echo "---------------------------"
 
+# Функция для получения текущего значения газа
+get_gas_price() {
+    current_gas=$(curl -s https://api.blockchair.com/bitcoin/outputs?q=gauge:popmd | jq -r '.data[0].gas')
+    echo "Текущий газ: $current_gas"
+}
+
 # --- Меню выбора ---
 
 while true; do
+    echo ""
+    get_gas_price
     echo ""
     echo "1) Запустить майнер"
     echo "2) Редактировать конфиг (nano)"
@@ -48,4 +61,4 @@ while true; do
         3) exit ;;
         *) echo "Неверный ввод!";;
     esac
-done
+done  
