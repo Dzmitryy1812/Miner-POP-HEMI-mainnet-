@@ -2,37 +2,43 @@
 
 echo "=== HEMI Miner Installer ==="
 
-# Параметры
-MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
-MINER_PID=""
+# Обновление системы
+sudo apt update && sudo apt upgrade -y
+sudo apt install wget unzip nano curl screen jq -y
 
-# Установка необходимых пакетов
-sudo apt update
-sudo apt install jq curl screen -y
+# Скачиваем майнер
+wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+cd heminetwork_v1.0.0_linux_amd64
 
-# Проверка установки майнера
-if [ -d "$MINER_DIR" ]; then
-    echo "Майнер уже установлен, пропускаем установку."
-else
-    echo "Майнер не найден, начинаем установку..."
+# Проверка текущего газа с помощью API
+get_gas() {
+  echo $(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee')
+}
 
-    # Обновление системы
-    sudo apt update && sudo apt upgrade -y
-    sudo apt install wget unzip nano curl jq screen -y
-
-    # Скачиваем майнер
-    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
-    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-    cd heminetwork_v1.0.0_linux_amd64
-fi
-
-# --- Меню ---
+# Мониторинг газа с задержкой
+current_gas=$(get_gas)
 echo ""
+echo "===== Текущий газ ====="
+echo "Текущий газ: ${current_gas} sat/vB"
+echo "-----------------------"
+
+# Пауза в 30 секунд перед следующим запросом
+while [[ "$current_gas" -gt 50 ]]; do
+  echo "Газ слишком высок! Проверяем снова..."
+  sleep 30
+  current_gas=$(get_gas)
+  echo "Текущий газ: ${current_gas} sat/vB"
+done
+
+echo "Газ в норме, продолжаем установку..."
+
+# Меню настройки
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
-read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
+read -p "Введите POPM_STATIC_FEE (например, 4): " static_fee
 
-# --- Генерация конфига ---
+# Генерация конфигурационного файла
 cat > config.sh <<EOF
 export POPM_BTC_PRIVKEY=${btc_key}
 export POPM_STATIC_FEE=${static_fee}
@@ -42,55 +48,22 @@ EOF
 
 chmod +x config.sh
 
-echo ""
 echo "✅ Конфиг успешно создан!"
 echo "---------------------------"
 cat config.sh
 echo "---------------------------"
 
-# --- Меню выбора ---
+# Меню выбора действия
 while true; do
     echo ""
-    echo "1) Запустить мониторинг газа и майнера"
+    echo "1) Запустить майнер"
     echo "2) Редактировать конфиг (nano)"
     echo "3) Выход"
     read -p "Выберите действие: " choice
     case $choice in
-        1)
-            # Запуск мониторинга газа
-            while true; do
-                # Получаем текущую цену газа из mempool.space
-                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq .fastestFee)
-
-                # Выводим текущий газ
-                echo "Газ: $gas_price"
-
-                # Если газ меньше или равен порогу, запускаем майнер
-                if [ "$gas_price" -le "$static_fee" ]; then
-                    if [ -z "$MINER_PID" ]; then
-                        echo "Газ в норме, запускаем майнер..."
-                        screen -dmS hemi_miner bash -c "cd $MINER_DIR && source config.sh && ./popmd"
-                        MINER_PID=$(pgrep -f "popmd")  # Получаем PID процесса майнера
-                    fi
-                else
-                    if [ -n "$MINER_PID" ]; then
-                        echo "Газ слишком высокий, останавливаем майнер..."
-                        kill -9 $MINER_PID  # Останавливаем майнер
-                        MINER_PID=""  # Сбрасываем PID
-                    fi
-                    echo "Газ слишком высокий, ожидаем..."
-                    sleep 30  # Ждем 30 секунд перед проверкой
-                fi
-            done
-            ;;
-        2)
-            nano config.sh
-            ;;
-        3)
-            exit
-            ;;
-        *)
-            echo "Неверный ввод!"
-            ;;
+        1) source config.sh && ./popmd ;;
+        2) nano config.sh ;;
+        3) exit ;;
+        *) echo "Неверный ввод!";;
     esac
 done
