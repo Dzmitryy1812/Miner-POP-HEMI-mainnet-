@@ -11,7 +11,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Список необходимых пакетов
-PACKAGES="jq curl screen wget unzip nano"
+PACKAGES="jq curl wget unzip nano"
 
 # Функция установки пакетов
 install_packages() {
@@ -108,7 +108,7 @@ while true; do
 
     if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
         echo "Газ в норме, запускаем майнер..."
-        screen -dmS hemi_miner bash -c "cd $MINER_DIR && source $CONFIG_FILE && ./popmd"
+        cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
         break
     else
         echo "Газ слишком высокий, продолжаем ожидание..."
@@ -117,4 +117,4 @@ while true; do
 done
 
 # Следим за процессом майнера
-echo "Майнер запущен. Для остановки используйте 'screen -r hemi_miner' и Ctrl+C."
+echo "Майнер запущен. Для остановки используйте 'pkill -f popmd'."
