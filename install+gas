@@ -55,4 +55,32 @@ while true; do
             # Запуск мониторинга газа
             while true; do
                 # Получаем текущую цену газа из mempool.space
-                gas_price=$(curl -s https://memp_
+                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq .fastestFee)
+
+                # Выводим текущий газ
+                echo "Газ: $gas_price"
+
+                # Если газ меньше или равен порогу, запускаем майнер
+                if [ "$gas_price" -le "$static_fee" ]; then
+                    echo "Газ в норме, запускаем майнер..."
+                    cd $MINER_DIR
+                    source config.sh
+                    ./popmd
+                    break
+                else
+                    echo "Газ слишком высокий, ожидаем..."
+                    sleep 30  # Ждем 30 секунд перед проверкой
+                fi
+            done
+            ;;
+        2)
+            nano config.sh
+            ;;
+        3)
+            exit
+            ;;
+        *)
+            echo "Неверный ввод!"
+            ;;
+    esac
+done
