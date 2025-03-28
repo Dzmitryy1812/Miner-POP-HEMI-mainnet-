@@ -67,32 +67,30 @@ cleanup() {
 # Устанавливаем обработчик прерывания (Ctrl+C)
 trap cleanup INT
 
-# --- Настройка конфига при первом запуске ---
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo ""
-    echo "===== Настройка майнера ====="
-    read -p "Введите ваш приватный ключ BTC: " btc_key
-    read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
-    if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-        echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
-        exit 1
-    fi
-    cat > "$CONFIG_FILE" <<EOF
+# --- Настройка конфига при каждом запуске скрипта ---
+echo ""
+echo "===== Настройка майнера ====="
+read -p "Введите ваш приватный ключ BTC: " btc_key
+read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
+if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
+    echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
+    exit 1
+fi
+cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
 export POPM_BTC_PRIVKEY=${btc_key}
 export POPM_STATIC_FEE=${static_fee}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
-    chmod +x "$CONFIG_FILE"
-    echo "✅ Конфиг создан!"
-    echo "---------------------------"
-    cat "$CONFIG_FILE"
-    echo "---------------------------"
-else
-    echo "Конфиг уже существует, загружаем параметры..."
-    source "$CONFIG_FILE"
-fi
+chmod +x "$CONFIG_FILE"
+echo "✅ Конфиг обновлен!"
+echo "---------------------------"
+cat "$CONFIG_FILE"
+echo "---------------------------"
+
+# Загружаем параметры из нового конфига
+source "$CONFIG_FILE"
 
 # --- Основной цикл мониторинга и запуска майнера ---
 cd "$MINER_DIR" || exit 1
