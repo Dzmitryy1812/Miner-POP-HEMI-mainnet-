@@ -28,6 +28,7 @@
 1. Скачайте и выполните скрипт:
    ```bash
    wget -O install.sh https://raw.githubusercontent.com/Dzmitryy1812/Miner-POP-HEMI-mainnet-/c8c5996d04b45f5a51d1427e28feb004a638d2ad/install.sh && chmod +x install.sh && ./install.sh
+
 Скрипт запросит:
 Ваш приватный ключ BTC.
 Значение для POPM_STATIC_FEE (например, 4). Это значение можно узнать на mempool.space.
