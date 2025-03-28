@@ -2,18 +2,25 @@
 
 echo "=== HEMI Miner Installer ==="
 
-# Проверка на существование папки с майнером
-if [ -d "heminetwork_v1.0.0_linux_amd64" ]; then
-    echo "❗ Майнер уже установлен. Пропускаем установку."
-    cd heminetwork_v1.0.0_linux_amd64
-else
-    # Обновление системы
+# Установка Node.js
+echo "Устанавливаем Node.js..."
+curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+sudo apt install -y nodejs
+
+# Проверка установки Node.js
+node -v
+npm -v
+
+# Установка майнера, если он еще не установлен
+if [ ! -d "heminetwork_v1.0.0_linux_amd64" ]; then
     sudo apt update && sudo apt upgrade -y
     sudo apt install wget unzip nano curl screen -y
 
-    # Скачиваем майнер
     wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
     tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+    cd heminetwork_v1.0.0_linux_amd64
+else
+    echo "Майнер уже установлен."
     cd heminetwork_v1.0.0_linux_amd64
 fi
 
@@ -36,15 +43,22 @@ chmod +x config.sh
 
 echo ""
 echo "✅ Конфиг успешно создан!"
-echo "---------------------------"
 cat config.sh
 echo "---------------------------"
 
-# Функция для получения текущего значения газа
+# Функция для получения текущего газа
 get_gas_price() {
-    # Получаем текущий газ (пример API, возможно будет нужно скорректировать для HEMI)
-    current_gas=$(curl -s "https://api.blockchair.com/bitcoin/stats" | jq -r '.data.transaction_stats.gas_price')
-    echo "Текущий газ: $current_gas"
+    node -e "
+const https = require('https');
+https.get('https://api.blockchair.com/bitcoin/stats', (res) => {
+    let data = '';
+    res.on('data', (chunk) => { data += chunk; });
+    res.on('end', () => {
+        const gasPrice = JSON.parse(data).data.transaction_stats.gas_price;
+        console.log('Текущий газ: ' + gasPrice);
+    });
+});
+"
 }
 
 # --- Меню выбора ---
@@ -63,4 +77,4 @@ while true; do
         3) exit ;;
         *) echo "Неверный ввод!";;
     esac
-done  
+done
