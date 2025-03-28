@@ -1,39 +1,47 @@
 #!/bin/bash
 
-# Параметры
+# ==== Параметры ====
 MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
 CONFIG_FILE="$MINER_DIR/config.sh"
+MONITOR_SCREEN="tracker"
+MINER_SCREEN="hemi_miner"
+PACKAGES="jq curl screen wget unzip nano"
 
-# Проверка прав root
+# ==== Проверка прав ====
 if [ "$EUID" -ne 0 ]; then
-    echo "Ошибка: Скрипт должен быть запущен с правами root (используйте sudo)."
+    echo "Ошибка: Запустите скрипт с правами root (sudo)."
     exit 1
 fi
 
-# Устанавливаем пакеты
+# ==== Установка пакетов ====
 install_packages() {
-    echo "Проверка необходимых пакетов..."
-    # Ваши пакеты
+    echo "Проверка пакетов..."
+    for pkg in $PACKAGES; do
+        if ! dpkg -l | grep -q " $pkg "; then
+            echo "Устанавливаем $pkg..."
+            apt update && apt install -y "$pkg"
+        fi
+    done
 }
-
 install_packages
 
-# Проверка установки майнера
-if [ -d "$MINER_DIR" ]; then
-    echo "Майнер уже установлен, пропускаем установку."
-else
-    echo "Майнер не найден, начинаем установку..."
-    # Установка и скачивание
+# ==== Установка майнера ====
+if [ ! -d "$MINER_DIR" ]; then
+    echo "Устанавливаем майнер..."
+    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+    mv heminetwork_v1.0.0_linux_amd64 "$HOME/"
 fi
 
-# --- Настройка конфига при каждом запуске скрипта ---
+# ==== Настройка конфига ====
 echo "===== Настройка майнера ====="
-read -p "Введите ваш приватный ключ BTC: " btc_key
+read -p "Введите приватный ключ BTC: " btc_key
 read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
 if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-    echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
+    echo "Ошибка: POPM_STATIC_FEE должно быть числом!"
     exit 1
 fi
+
 cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
 export POPM_BTC_PRIVKEY=${btc_key}
@@ -41,36 +49,48 @@ export POPM_STATIC_FEE=${static_fee}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
+
 chmod +x "$CONFIG_FILE"
-echo "✅ Конфиг обновлен!"
-
-# Загружаем параметры из нового конфига
 source "$CONFIG_FILE"
+echo "✅ Конфиг сохранен."
 
-# --- Основной цикл мониторинга и запуска майнера ---
-cd "$MINER_DIR" || exit 1
+# ==== Функция мониторинга ====
+monitor_gas() {
+    echo "▶️ Запуск мониторинга газа..."
+    while true; do
+        gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee')
+        if [[ ! "$gas_price" =~ ^[0-9]+$ ]]; then
+            echo "❗️ Не удалось получить газ. Повтор через 30 сек."
+            sleep 30
+            continue
+        fi
+        echo "$(date '+%H:%M:%S') Газ: $gas_price sat/vB (порог: $POPM_STATIC_FEE)"
 
-# Проверка газа перед запуском майнера
-echo "Ожидаем подходящий газ для запуска майнера..."
-while true; do
-    gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
-    if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+        miner_running=$(screen -ls | grep "$MINER_SCREEN")
+        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+            if [ -z "$miner_running" ]; then
+                echo "✅ Газ норм ($gas_price), запускаем майнер..."
+                screen -dmS "$MINER_SCREEN" bash -c "cd $MINER_DIR && source config.sh && ./popmd"
+            else
+                echo "✅ Майнер уже работает."
+            fi
+        else
+            if [ -n "$miner_running" ]; then
+                echo "❗️ Газ высокий ($gas_price), останавливаем майнер..."
+                screen -S "$MINER_SCREEN" -X quit
+            else
+                echo "❗️ Майнер уже остановлен."
+            fi
+        fi
         sleep 30
-        continue
-    fi
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+    done
+}
 
-    # Если газ в норме, запускаем майнер
-    if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
-        echo "Газ в норме, запускаем майнер..."
-        screen -dmS hemi_miner bash -c "cd $MINER_DIR && source $CONFIG_FILE && ./popmd"
-        break
-    else
-        echo "Газ слишком высокий, продолжаем ожидание..."
-        sleep 30
-    fi
-done
+# ==== Запуск мониторинга ====
+echo ""
+echo "🚀 Запускаем мониторинг в screen '$MONITOR_SCREEN'..."
+screen -dmS "$MONITOR_SCREEN" bash -c "$(declare -f monitor_gas); monitor_gas"
 
-# Следим за процессом майнера
-echo "Майнер запущен. Для остановки используйте 'screen -r hemi_miner' и Ctrl+C."
+echo "✅ Всё готово!"
+echo "ℹ️ Для просмотра мониторинга: screen -r $MONITOR_SCREEN"
+echo "ℹ️ Чтобы выйти из screen без остановки: Ctrl+A, затем D"
