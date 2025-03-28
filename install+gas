@@ -1,0 +1,79 @@
+#!/bin/bash
+
+echo "=== HEMI Miner Installer ==="
+
+# Настройка пути к папке майнера
+MINER_DIR="heminetwork_v1.0.0_linux_amd64"
+
+# Проверка, если майнер уже установлен
+if [ -d "$MINER_DIR" ]; then
+    echo "Майнер уже установлен. Пропускаем установку."
+else
+    # Обновление системы
+    sudo apt update && sudo apt upgrade -y
+    sudo apt install wget unzip nano curl screen -y
+
+    # Скачиваем майнер
+    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+    cd heminetwork_v1.0.0_linux_amd64
+fi
+
+# Меню настройки майнера
+echo ""
+echo "===== Настройка майнера ====="
+read -p "Введите ваш приватный ключ BTC: " btc_key
+read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
+
+# Генерация конфига
+cat > config.sh <<EOF
+export POPM_BTC_PRIVKEY=${btc_key}
+export POPM_STATIC_FEE=${static_fee}
+export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
+export POPM_BTC_CHAIN_NAME=mainnet
+EOF
+
+chmod +x config.sh
+
+echo ""
+echo "✅ Конфиг успешно создан!"
+echo "---------------------------"
+cat config.sh
+echo "---------------------------"
+
+# Запуск мониторинга газа и майнера
+function check_gas_and_mine {
+    while true; do
+        # Проверяем текущий газ на mempool
+        current_gas=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee)
+
+        # Условие для запуска/остановки майнера
+        if [ "$current_gas" -le "$static_fee" ]; then
+            if ! pgrep -f "popmd" > /dev/null; then
+                echo "Газ в пределах нормы, запускаем майнер..."
+                source config.sh && ./popmd &
+            fi
+        else
+            if pgrep -f "popmd" > /dev/null; then
+                echo "Газ слишком высок, останавливаем майнер..."
+                pkill -f "popmd"
+            fi
+        fi
+        sleep 30  # Проверка каждый 30 секунд
+    done
+}
+
+# Меню выбора
+while true; do
+    echo ""
+    echo "1) Запустить мониторинг газа и майнера"
+    echo "2) Редактировать конфиг (nano)"
+    echo "3) Выход"
+    read -p "Выберите действие: " choice
+    case $choice in
+        1) check_gas_and_mine ;;
+        2) nano config.sh ;;
+        3) exit ;;
+        *) echo "Неверный ввод!";;
+    esac
+done
