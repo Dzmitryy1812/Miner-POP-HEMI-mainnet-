@@ -1,23 +1,28 @@
 #!/bin/bash
 
-echo "=== HEMI Miner Installer ==="
+echo "=== HEMI Miner Installer with Gas Monitoring ==="
 
-# Обновление системы
+# Обновление системы и установка необходимых пакетов
 sudo apt update && sudo apt upgrade -y
 sudo apt install wget unzip nano curl screen jq -y
 
-# Скачиваем майнер
-wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
-tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-cd heminetwork_v1.0.0_linux_amd64
+# Проверка, если майнер уже установлен
+if [ -d "heminetwork_v1.0.0_linux_amd64" ]; then
+    echo "Майнер уже установлен. Пропускаем установку."
+else
+    # Скачиваем майнер
+    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+    cd heminetwork_v1.0.0_linux_amd64
+fi
 
-# --- Меню ---
+# --- Меню настройки майнера ---
 echo ""
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
 read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
 
-# --- Генерация конфига ---
+# Генерация конфига
 cat > config.sh <<EOF
 export POPM_BTC_PRIVKEY=${btc_key}
 export POPM_STATIC_FEE=${static_fee}
@@ -33,36 +38,58 @@ echo "---------------------------"
 cat config.sh
 echo "---------------------------"
 
-# --- Меню выбора ---
+# Пороговое значение газа, ниже которого запускается майнер
+gas_limit=2
+
+# Функция для получения текущего газа
+get_gas() {
+    # Получаем текущую комиссию для самой быстрой транзакции
+    current_gas=$(curl -s https://mempool.space/api/v1/fees/recommended | jq '.fastestFee')
+
+    # Возвращаем значение газа
+    echo "$current_gas"
+}
+
+# Проверка газа и запуск майнера, если комиссия ниже порога
+monitor_gas() {
+    while true; do
+        current_gas=$(get_gas)
+
+        # Преобразуем в число для корректного сравнения
+        if [[ "$current_gas" -le "$gas_limit" ]]; then
+            echo "Газ: $current_gas (подходит для запуска майнера)."
+            # Запускаем майнер
+            source config.sh && ./popmd
+            break
+        else
+            echo "Газ слишком высок: $current_gas. Ждем 30 секунд перед повторной проверкой..."
+        fi
+
+        # Ожидаем 30 секунд перед повторной проверкой
+        sleep 30
+    done
+}
+
+# --- Меню выбора действия ---
 while true; do
     echo ""
-    echo "1) Запустить майнер"
+    echo "1) Запустить мониторинг газа и майнера"
     echo "2) Редактировать конфиг (nano)"
     echo "3) Выход"
     read -p "Выберите действие: " choice
     case $choice in
-        1) 
-            # Мониторинг газа
-            while true; do
-                gas=$(curl -s https://mempool.space/api/v1/fees/recommended | jq '.fastestFee')
-
-                if [ -z "$gas" ]; then
-                    echo "Не удалось получить данные о газе, попробуйте позже."
-                    exit 1
-                fi
-
-                if [ "$gas" -le 3 ]; then
-                    echo "Газ в сети ниже порога, запускаем майнер..."
-                    source config.sh && ./popmd
-                    break
-                else
-                    echo "Газ в сети слишком высок, ожидаем 30 секунд..."
-                    sleep 30
-                fi
-            done
+        1)
+            monitor_gas
+            break
             ;;
-        2) nano config.sh ;;
-        3) exit ;;
-        *) echo "Неверный ввод!";;
+        2)
+            nano config.sh
+            ;;
+        3)
+            exit
+            ;;
+        *)
+            echo "Неверный ввод! Повторите попытку."
+            ;;
     esac
 done
