@@ -113,13 +113,14 @@ while true; do
                     continue
                 fi
 
-                # Выводим текущий газ
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB"
+                # Выводим текущий газ и статус
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $static_fee sat/vB)"
 
-                # Если газ меньше или равен порогу, запускаем майнер
+                # Проверяем состояние майнера
                 if [ "$gas_price" -le "$static_fee" ]; then
+                    # Газ в норме, запускаем майнер, если он не работает
                     if ! pgrep -f "popmd" > /dev/null; then
-                        echo "Газ в норме ($gas_price <= $static_fee), запускаем майнер..."
+                        echo "Газ в пределах нормы ($gas_price <= $static_fee), запускаем майнер..."
                         screen -dmS hemi_miner bash -c "source $CONFIG_FILE && ./popmd"
                         sleep 5  # Даем время на запуск
                         MINER_PID=$(pgrep -f "popmd" | head -n 1)
@@ -128,15 +129,19 @@ while true; do
                         else
                             echo "Ошибка: Майнер не запустился!"
                         fi
+                    else
+                        echo "Майнер уже работает (Газ: $gas_price <= $static_fee)"
                     fi
                 else
+                    # Газ слишком высокий, останавливаем майнер, если он работает
                     if pgrep -f "popmd" > /dev/null; then
-                        echo "Газ слишком высокий ($gas_price > $static_fee), останавливаем майнер..."
+                        echo "Газ превышает порог ($gas_price > $static_fee), останавливаем майнер..."
                         pkill -f "popmd"
                         MINER_PID=""
                         echo "Майнер остановлен"
+                    else
+                        echo "Майнер не работает, ждем снижения газа ($gas_price > $static_fee)..."
                     fi
-                    echo "Ожидаем снижения газа..."
                 fi
                 sleep 30  # Ждем 30 секунд перед следующей проверкой
             done
