@@ -7,23 +7,28 @@ CONFIG_FILE="$MINER_DIR/config.sh"
 # Загружаем параметры из конфига
 source "$CONFIG_FILE"
 
+# Функция логирования
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+
 # --- Функция мониторинга газа ---
 monitor_gas_and_stop_miner() {
     gas_limit=$1
     while true; do
         gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
         if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+            log_message "Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
             sleep 30
             continue
         fi
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $gas_limit sat/vB)"
+        log_message "Газ: $gas_price sat/vB (Порог: $gas_limit sat/vB)"
 
         if [ "$gas_price" -gt "$gas_limit" ]; then
             if pgrep -f "popmd" > /dev/null; then
-                echo "Газ превышает порог ($gas_price > $gas_limit), останавливаем майнер..."
+                log_message "Газ превышает порог ($gas_price > $gas_limit), останавливаем майнер..."
                 pkill -f "popmd"
-                echo "Майнер остановлен"
+                log_message "Майнер остановлен"
             fi
         fi
         sleep 30
@@ -32,10 +37,16 @@ monitor_gas_and_stop_miner() {
 
 # Ожидание запуска майнера
 while ! pgrep -f "popmd" > /dev/null; do
-    echo "Майнер не запущен. Ожидаем запуск..."
+    log_message "Майнер не запущен. Ожидаем запуск..."
     sleep 30
 done
 
-# Запуск мониторинга газа в фоновом режиме
-echo "Майнер запущен, начинаем мониторинг газа..."
+log_message "Майнер запущен, начинаем мониторинг газа..."
 monitor_gas_and_stop_miner "$POPM_STATIC_FEE" &
+
+# Дополнительная проверка на случай если майнер завершил работу
+while pgrep -f "popmd" > /dev/null; do
+    sleep 5
+done
+
+log_message "Майнер завершил работу."
