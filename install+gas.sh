@@ -74,10 +74,11 @@ start_miner() {
 
         if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
             echo "Газ в норме, запускаем майнер..."
-            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
+            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd & 
             miner_pid=$!
             wait $miner_pid
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу. Перезапуск после проверки газа..."
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу. Перезапуск после 10 минутного таймаута..."
+            sleep 600  # 10 минутный таймаут
         else
             echo "Газ слишком высокий, продолжаем ожидание..."
             sleep 30
