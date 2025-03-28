@@ -42,7 +42,8 @@ echo "---------------------------"
 
 # Функция для получения текущего значения газа
 get_gas_price() {
-    current_gas=$(curl -s https://api.blockchair.com/bitcoin/outputs?q=gauge:popmd | jq -r '.data[0].gas')
+    # Получаем текущий газ (пример API, возможно будет нужно скорректировать для HEMI)
+    current_gas=$(curl -s "https://api.blockchair.com/bitcoin/stats" | jq -r '.data.transaction_stats.gas_price')
     echo "Текущий газ: $current_gas"
 }
 
