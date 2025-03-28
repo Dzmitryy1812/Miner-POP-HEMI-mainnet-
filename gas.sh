@@ -33,7 +33,7 @@ monitor_gas_and_stop_miner() {
 # Ожидание запуска майнера
 while ! pgrep -f "popmd" > /dev/null; do
     echo "Майнер не запущен. Ожидаем запуск..."
-    sleep 60
+    sleep 30
 done
 
 # Запуск мониторинга газа в фоновом режиме
