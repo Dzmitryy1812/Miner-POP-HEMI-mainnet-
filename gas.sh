@@ -30,10 +30,12 @@ monitor_gas_and_stop_miner() {
     done
 }
 
+# Ожидание запуска майнера
+while ! pgrep -f "popmd" > /dev/null; do
+    echo "Майнер не запущен. Ожидаем запуск..."
+    sleep 5
+done
+
 # Запуск мониторинга газа в фоновом режиме
-if pgrep -f "popmd" > /dev/null; then
-    echo "Майнер запущен, начинаем мониторинг газа..."
-    monitor_gas_and_stop_miner "$POPM_STATIC_FEE" &
-else
-    echo "Майнер не запущен. Сначала запустите майнер."
-fi
+echo "Майнер запущен, начинаем мониторинг газа..."
+monitor_gas_and_stop_miner "$POPM_STATIC_FEE" &
