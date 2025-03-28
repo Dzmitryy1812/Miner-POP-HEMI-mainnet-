@@ -5,22 +5,11 @@ echo "=== HEMI Miner Installer ==="
 # Параметры
 MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
 MINER_PID=""
+MINER_SCREEN="hemi_miner"
 
-# Проверка наличия необходимых пакетов
-if ! command -v jq &>/dev/null; then
-    echo "jq не найден, установка..."
-    sudo apt install jq -y
-fi
-
-if ! command -v curl &>/dev/null; then
-    echo "curl не найден, установка..."
-    sudo apt install curl -y
-fi
-
-if ! command -v screen &>/dev/null; then
-    echo "screen не найден, установка..."
-    sudo apt install screen -y
-fi
+# Установка необходимых пакетов
+sudo apt update
+sudo apt install jq curl screen -y
 
 # Проверка установки майнера
 if [ -d "$MINER_DIR" ]; then
@@ -69,15 +58,44 @@ while true; do
     read -p "Выберите действие: " choice
     case $choice in
         1)
-            # Запуск мониторинга газа
-            while true; do
-                # Получаем текущую цену газа из mempool.space
-                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq .fastestFee)
+            # Запуск мониторинга газа в другом экране
+            screen -dmS $MINER_SCREEN bash -c "
+                while true; do
+                    # Получаем текущую цену газа из mempool.space
+                    gas_price=\$(curl -s https://mempool.space/api/v1/fees/recommended | jq .fastestFee)
 
-                # Выводим текущий газ
-                echo "Газ: $gas_price"
+                    # Выводим текущий газ
+                    echo \"Текущий газ: \$gas_price\"
 
-                # Если газ меньше или равен порогу, запускаем майнер
-                if [ "$gas_price" -le "$static_fee" ]; then
-                    if [ -z "$MINER_PID" ]; then
-                        echo "Газ в норме
+                    # Если газ меньше или равен порогу, запускаем майнер
+                    if [ \"\$gas_price\" -le \"$static_fee\" ]; then
+                        if [ -z \"\$MINER_PID\" ]; then
+                            echo \"Газ в норме, запускаем майнер...\"
+                            screen -dmS hemi_miner bash -c \"cd $MINER_DIR && source config.sh && ./popmd\"
+                            MINER_PID=\$(pgrep -f 'popmd')  # Получаем PID процесса майнера
+                        fi
+                    else
+                        if [ -n \"\$MINER_PID\" ]; then
+                            echo \"Газ слишком высокий, останавливаем майнер...\"
+                            kill -9 \$MINER_PID  # Останавливаем майнер
+                            MINER_PID=\"\"  # Сбрасываем PID
+                        fi
+                        echo \"Газ слишком высокий, ожидаем...\" 
+                    fi
+                    sleep 30
+                done"
+            ;;
+
+        2)
+            nano config.sh
+            ;;
+
+        3)
+            exit
+            ;;
+
+        *)
+            echo "Неверный ввод!"
+            ;;
+    esac
+done
