@@ -63,9 +63,6 @@ cleanup() {
         echo "Останавливаем майнер..."
         pkill -f "popmd"
     fi
-    if screen -ls | grep -q "tracker"; then
-        screen -S tracker -X quit
-    fi
     echo "Выход..."
     exit 0
 }
@@ -98,44 +95,8 @@ echo "---------------------------"
 # Загружаем параметры из нового конфига
 source "$CONFIG_FILE"
 
-# --- Основной цикл мониторинга и запуска майнера ---
+# --- Запуск майнера ---
 cd "$MINER_DIR" || exit 1
-
-# Запуск майнера в основном окне
-echo "Запускаем майнер в основном окне..."
+echo "Запускаем майнер..."
 source "$CONFIG_FILE"
-./popmd &
-
-# Создание экрана для трекера
-screen -d -m -S tracker bash -c "bash $0 tracker"
-
-# Ожидание завершения майнера
-wait $!
-
-# --- Функция трекера (должна быть в конце скрипта) ---
-tracker() {
-    echo "Запускаем трекер газа и управление майнером..."
-    while true; do
-        gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
-        if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
-            sleep 30
-            continue
-        fi
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
-
-        if [ "$gas_price" -gt "$POPM_STATIC_FEE" ]; then
-            if pgrep -f "popmd" > /dev/null; then
-                echo "Газ превышает порог ($gas_price > $POPM_STATIC_FEE), останавливаем майнер..."
-                pkill -f "popmd"
-                echo "Майнер остановлен"
-            fi
-        fi
-        sleep 30
-    done
-}
-
-# Запуск трекера
-if [ "$1" = "tracker" ]; then
-    tracker
-fi 
+./popmd
