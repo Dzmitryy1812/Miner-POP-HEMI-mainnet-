@@ -5,7 +5,6 @@ echo "=== HEMI Miner Installer ==="
 # Параметры
 MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
 CONFIG_FILE="$MINER_DIR/config.sh"
-MONITOR_PID=""
 
 # Проверка прав root
 if [ "$EUID" -ne 0 ]; then
@@ -54,34 +53,6 @@ else
     }
 fi
 
-# --- Настройка конфига ---
-if [ ! -f "$CONFIG_FILE" ]; then
-    echo ""
-    echo "===== Настройка майнера ====="
-    read -p "Введите ваш приватный ключ BTC: " btc_key
-    read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
-    if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-        echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
-        exit 1
-    fi
-    cat > "$CONFIG_FILE" <<EOF
-#!/bin/bash
-export POPM_BTC_PRIVKEY=${btc_key}
-export POPM_STATIC_FEE=${static_fee}
-export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
-export POPM_BTC_CHAIN_NAME=mainnet
-EOF
-    chmod +x "$CONFIG_FILE"
-    echo ""
-    echo "✅ Конфиг успешно создан!"
-    echo "---------------------------"
-    cat "$CONFIG_FILE"
-    echo "---------------------------"
-else
-    echo "Конфиг уже существует, загружаем параметры..."
-    source "$CONFIG_FILE"
-fi
-
 # --- Функция мониторинга газа ---
 monitor_gas() {
     while true; do
@@ -95,8 +66,7 @@ monitor_gas() {
         
         if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
             if ! pgrep -f "popmd" > /dev/null; then
-                echo "Газ в пределах нормы ($gas_price <= $POPM_STATIC_FEE), запускаем майнер..." >> gas_monitor.log
-                # Майнер будет запущен в основном окне, поэтому здесь ничего не делаем
+                echo "Газ в пределах нормы ($gas_price <= $POPM_STATIC_FEE), майнер должен быть запущен вручную для логов в основном окне." >> gas_monitor.log
             fi
         else
             if pgrep -f "popmd" > /dev/null; then
@@ -121,37 +91,71 @@ while true; do
     read -p "Выберите действие: " choice
     case $choice in
         1)
-            # Проверяем, запущен ли уже мониторинг
-            if screen -list | grep -q "gas_monitor"; then
-                echo "Мониторинг газа уже запущен в screen (gas_monitor)."
-            else
-                echo "Запускаем мониторинг газа в screen (gas_monitor)..."
-                screen -dmS gas_monitor bash -c "cd $MINER_DIR && $0 monitor_gas"
-                sleep 2
-                if screen -list | grep -q "gas_monitor"; then
-                    echo "Мониторинг газа запущен. Логи мониторинга в $MINER_DIR/gas_monitor.log"
-                    echo "Для просмотра: screen -r gas_monitor"
-                else
-                    echo "Ошибка: Не удалось запустить мониторинг газа!"
-                    continue
-                fi
+            # Закрываем все существующие сессии screen
+            if screen -list | grep -q "."; then
+                echo "Закрываем все существующие сессии screen..."
+                screen -ls | grep Detached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
+                screen -ls | grep Attached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
             fi
 
-            # Проверяем текущий газ перед запуском майнера
+            # Запрашиваем приватный ключ и порог газа
+            echo ""
+            echo "===== Настройка майнера ====="
+            read -p "Введите ваш приватный ключ BTC: " btc_key
+            read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
+            if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
+                echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
+                continue
+            fi
+
+            # Обновляем конфиг
+            cat > "$CONFIG_FILE" <<EOF
+#!/bin/bash
+export POPM_BTC_PRIVKEY=${btc_key}
+export POPM_STATIC_FEE=${static_fee}
+export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
+export POPM_BTC_CHAIN_NAME=mainnet
+EOF
+            chmod +x "$CONFIG_FILE"
+            source "$CONFIG_FILE"
+            echo "✅ Конфиг обновлен!"
+
+            # Запускаем мониторинг газа в screen
+            echo "Запускаем мониторинг газа в screen (gas_monitor)..."
+            screen -dmS gas_monitor bash -c "cd $MINER_DIR && $0 monitor_gas"
+            sleep 2
+            if screen -list | grep -q "gas_monitor"; then
+                echo "Мониторинг газа запущен. Логи мониторинга в $MINER_DIR/gas_monitor.log"
+                echo "Для просмотра: screen -r gas_monitor"
+            else
+                echo "Ошибка: Не удалось запустить мониторинг газа!"
+                continue
+            fi
+
+            # Проверяем текущий газ и состояние майнера
             gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
             if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
                 echo "Ошибка: Не удалось получить данные о газе. Майнер не будет запущен."
             elif [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
                 if pgrep -f "popmd" > /dev/null; then
-                    echo "Майнер уже работает. Логи в основном окне не будут показаны, так как он запущен вне скрипта."
-                    echo "Остановите майнер (pkill -f popmd) и повторите попытку, если хотите видеть логи здесь."
+                    echo "Майнер уже работает (PID: $(pgrep -f "popmd" | head -n 1))."
+                    read -p "Остановить и перезапустить майнер для отображения логов в основном окне? (y/n): " restart_choice
+                    if [ "$restart_choice" = "y" ] || [ "$restart_choice" = "Y" ]; then
+                        echo "Останавливаем текущий майнер..."
+                        pkill -f "popmd"
+                        sleep 2
+                        echo "Запускаем майнер в основном окне..."
+                        source "$CONFIG_FILE" && ./popmd
+                    else
+                        echo "Майнер продолжает работать без отображения логов здесь."
+                    fi
                 else
                     echo "Газ в норме ($gas_price <= $POPM_STATIC_FEE), запускаем майнер в основном окне..."
                     source "$CONFIG_FILE" && ./popmd
                 fi
             else
                 echo "Газ слишком высокий ($gas_price > $POPM_STATIC_FEE), майнер не будет запущен."
-                echo "Ждем, пока мониторинг в screen запустит майнер, когда газ снизится."
+                echo "Мониторинг в screen остановит майнер, если он работает, и вы сможете запустить его позже."
             fi
             ;;
         2)
@@ -165,9 +169,10 @@ while true; do
                 echo "Останавливаем майнер перед выходом..."
                 pkill -f "popmd"
             fi
-            if screen -list | grep -q "gas_monitor"; then
-                echo "Останавливаем мониторинг газа..."
-                screen -S gas_monitor -X quit
+            if screen -list | grep -q "."; then
+                echo "Закрываем все сессии screen..."
+                screen -ls | grep Detached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
+                screen -ls | grep Attached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
             fi
             echo "Выход из программы"
             exit 0
