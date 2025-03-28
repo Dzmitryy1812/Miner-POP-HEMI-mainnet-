@@ -4,6 +4,8 @@ echo "=== HEMI Miner Installer ==="
 
 # Параметры
 MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
+CONFIG_FILE="$MINER_DIR/config.sh"
+MINER_PID=""
 
 # Проверка прав root
 if [ "$EUID" -ne 0 ]; then
@@ -11,15 +13,33 @@ if [ "$EUID" -ne 0 ]; then
     exit 1
 fi
 
-# Установка необходимых пакетов
-sudo apt update && sudo apt upgrade -y
-sudo apt install wget unzip nano curl jq screen -y
+# Список необходимых пакетов
+PACKAGES="jq curl screen wget unzip nano"
+
+# Проверка и установка пакетов
+echo "Проверка необходимых пакетов..."
+for pkg in $PACKAGES; do
+    if dpkg -l | grep -q " $pkg "; then
+        echo "$pkg уже установлен."
+    else
+        echo "$pkg не найден, устанавливаем..."
+        sudo apt update
+        sudo apt install -y "$pkg"
+        if [ $? -ne 0 ]; then
+            echo "Ошибка: Не удалось установить $pkg."
+            exit 1
+        fi
+    fi
+done
 
 # Проверка установки майнера
 if [ -d "$MINER_DIR" ]; then
     echo "Майнер уже установлен, пропускаем установку."
 else
     echo "Майнер не найден, начинаем установку..."
+
+    # Обновление системы
+    sudo apt update && sudo apt upgrade -y
 
     # Скачиваем майнер
     wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
@@ -40,6 +60,102 @@ else
     }
 fi
 
-# --- Меню ---
+# --- Настройка конфига ---
 echo ""
 echo "===== Настройка майнера ====="
+read -p "Введите ваш приватный ключ BTC: " btc_key
+read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
+
+# Проверка, что static_fee является числом
+if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
+    echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
+    exit 1
+fi
+
+# --- Генерация конфига ---
+cat > "$CONFIG_FILE" <<EOF
+#!/bin/bash
+export POPM_BTC_PRIVKEY=${btc_key}
+export POPM_STATIC_FEE=${static_fee}
+export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
+export POPM_BTC_CHAIN_NAME=mainnet
+EOF
+
+chmod +x "$CONFIG_FILE"
+
+echo ""
+echo "✅ Конфиг успешно создан!"
+echo "---------------------------"
+cat "$CONFIG_FILE"
+echo "---------------------------"
+
+# --- Меню выбора ---
+cd "$MINER_DIR" || exit 1
+
+while true; do
+    echo ""
+    echo "===== Меню управления майнером ====="
+    echo "1) Запустить мониторинг газа и майнера"
+    echo "2) Редактировать конфиг (nano)"
+    echo "3) Выход"
+    read -p "Выберите действие: " choice
+    case $choice in
+        1)
+            echo "Запускаем мониторинг газа..."
+            while true; do
+                # Получаем текущую цену газа из mempool.space
+                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
+                
+                # Проверка успешности получения данных
+                if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
+                    echo "Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+                    sleep 30
+                    continue
+                fi
+
+                # Выводим текущий газ
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB"
+
+                # Если газ меньше или равен порогу, запускаем майнер
+                if [ "$gas_price" -le "$static_fee" ]; then
+                    if ! pgrep -f "popmd" > /dev/null; then
+                        echo "Газ в норме ($gas_price <= $static_fee), запускаем майнер..."
+                        screen -dmS hemi_miner bash -c "source $CONFIG_FILE && ./popmd"
+                        sleep 5  # Даем время на запуск
+                        MINER_PID=$(pgrep -f "popmd" | head -n 1)
+                        if [ -n "$MINER_PID" ]; then
+                            echo "Майнер запущен с PID: $MINER_PID"
+                        else
+                            echo "Ошибка: Майнер не запустился!"
+                        fi
+                    fi
+                else
+                    if pgrep -f "popmd" > /dev/null; then
+                        echo "Газ слишком высокий ($gas_price > $static_fee), останавливаем майнер..."
+                        pkill -f "popmd"
+                        MINER_PID=""
+                        echo "Майнер остановлен"
+                    fi
+                    echo "Ожидаем снижения газа..."
+                fi
+                sleep 30  # Ждем 30 секунд перед следующей проверкой
+            done
+            ;;
+        2)
+            nano "$CONFIG_FILE"
+            chmod +x "$CONFIG_FILE"  # Обновляем права после редактирования
+            echo "Конфиг отредактирован. Перезапустите майнер, если он работает."
+            ;;
+        3)
+            if pgrep -f "popmd" > /dev/null; then
+                echo "Останавливаем майнер перед выходом..."
+                pkill -f "popmd"
+            fi
+            echo "Выход из программы"
+            exit 0
+            ;;
+        *)
+            echo "Неверный ввод! Выберите 1, 2 или 3."
+            ;;
+    esac
+done
