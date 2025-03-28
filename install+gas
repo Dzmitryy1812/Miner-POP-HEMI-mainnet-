@@ -95,8 +95,26 @@ echo "---------------------------"
 # Загружаем параметры из нового конфига
 source "$CONFIG_FILE"
 
-# --- Запуск майнера ---
-cd "$MINER_DIR" || exit 1
-echo "Запускаем майнер..."
-source "$CONFIG_FILE"
-./popmd
+# --- Ожидание подходящего газа для запуска майнера ---
+echo "Ожидаем газ ниже или равный $POPM_STATIC_FEE... для запуска майнера."
+while true; do
+    gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
+    if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+        sleep 30
+        continue
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+
+    if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+        echo "Газ в норме, запускаем майнер..."
+        screen -dmS hemi_miner bash -c "cd $MINER_DIR && source $CONFIG_FILE && ./popmd"
+        break
+    else
+        echo "Газ слишком высокий, продолжаем ожидание..."
+        sleep 30
+    fi
+done
+
+# Следим за процессом майнера
+echo "Майнер запущен. Для остановки используйте 'screen -r hemi_miner' и Ctrl+C."
