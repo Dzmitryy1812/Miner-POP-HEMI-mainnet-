@@ -2,41 +2,37 @@
 
 echo "=== HEMI Miner Installer ==="
 
-# Обновление системы
-sudo apt update && sudo apt upgrade -y
-sudo apt install wget unzip nano curl screen -y
+# Параметры
+MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
+MINER_PID=""
 
-# Скачиваем майнер
-wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
-tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
-cd heminetwork_v1.0.0_linux_amd64
+# Установка необходимых пакетов
+sudo apt update
+sudo apt install jq curl screen -y
 
-# Запрос минимального значения газа от пользователя
-read -p "Введите минимальное значение газа (например, 2): " min_gas
+# Проверка установки майнера
+if [ -d "$MINER_DIR" ]; then
+    echo "Майнер уже установлен, пропускаем установку."
+else
+    echo "Майнер не найден, начинаем установку..."
 
-# Запуск майнера
-echo "Запуск майнера..."
-screen -S hemi_miner -d -m ./popmd
+    # Обновление системы
+    sudo apt update && sudo apt upgrade -y
+    sudo apt install wget unzip nano curl jq screen -y
 
-# Проверка газа после запуска майнера
-while true; do
-    current_gas=$(curl -s https://api.hemi.network/gas/ | jq -r '.gas | tonumber')
-    echo "Текущий газ: $current_gas sat/vB"
-    
-    if [ "$current_gas" -ge "$min_gas" ]; then
-        echo "Газ в норме, продолжаем работу..."
-        break
-    else
-        echo "Газ слишком низкий, проверяем через 30 секунд..."
-        sleep 30
-    fi
-done
+    # Скачиваем майнер
+    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+    cd heminetwork_v1.0.0_linux_amd64
+fi
 
-# Настройка конфигурации
+# --- Меню ---
+echo ""
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
-read -p "Введите POPM_STATIC_FEE (например, 4): " static_fee
+read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
 
+# --- Генерация конфига ---
 cat > config.sh <<EOF
 export POPM_BTC_PRIVKEY=${btc_key}
 export POPM_STATIC_FEE=${static_fee}
@@ -46,20 +42,55 @@ EOF
 
 chmod +x config.sh
 
+echo ""
 echo "✅ Конфиг успешно создан!"
+echo "---------------------------"
 cat config.sh
+echo "---------------------------"
 
-# Меню
+# --- Меню выбора ---
 while true; do
     echo ""
-    echo "1) Запустить мониторинг газа"
+    echo "1) Запустить мониторинг газа и майнера"
     echo "2) Редактировать конфиг (nano)"
     echo "3) Выход"
     read -p "Выберите действие: " choice
     case $choice in
-        1) echo "Мониторинг газа активен...";;
-        2) nano config.sh ;;
-        3) exit ;;
-        *) echo "Неверный ввод!";;
+        1)
+            # Запуск мониторинга газа
+            while true; do
+                # Получаем текущую цену газа из mempool.space
+                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq .fastestFee)
+
+                # Выводим текущий газ
+                echo "Газ: $gas_price"
+
+                # Если газ меньше или равен порогу, запускаем майнер
+                if [ "$gas_price" -le "$static_fee" ]; then
+                    if [ -z "$MINER_PID" ]; then
+                        echo "Газ в норме, запускаем майнер..."
+                        screen -dmS hemi_miner bash -c "cd $MINER_DIR && source config.sh && ./popmd"
+                        MINER_PID=$(pgrep -f "popmd")  # Получаем PID процесса майнера
+                    fi
+                else
+                    if [ -n "$MINER_PID" ]; then
+                        echo "Газ слишком высокий, останавливаем майнер..."
+                        kill -9 $MINER_PID  # Останавливаем майнер
+                        MINER_PID=""  # Сбрасываем PID
+                    fi
+                    echo "Газ слишком высокий, ожидаем..."
+                    sleep 30  # Ждем 30 секунд перед проверкой
+                fi
+            done
+            ;;
+        2)
+            nano config.sh
+            ;;
+        3)
+            exit
+            ;;
+        *)
+            echo "Неверный ввод!"
+            ;;
     esac
 done
