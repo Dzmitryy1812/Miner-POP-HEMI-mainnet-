@@ -53,6 +53,25 @@ else
     }
 fi
 
+# --- Функция очистки при прерывании ---
+cleanup() {
+    echo "Прерывание скрипта..."
+    if pgrep -f "popmd" > /dev/null; then
+        echo "Останавливаем майнер..."
+        pkill -f "popmd"
+    fi
+    if screen -list | grep -q "."; then
+        echo "Закрываем все сессии screen..."
+        screen -ls | grep Detached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
+        screen -ls | grep Attached | awk '{print $1}' | xargs -I {} screen -S {} -X quit
+    fi
+    echo "Выход..."
+    exit 0
+}
+
+# Устанавливаем обработчик прерывания (Ctrl+C)
+trap cleanup INT
+
 # --- Функция мониторинга газа ---
 monitor_gas() {
     while true; do
