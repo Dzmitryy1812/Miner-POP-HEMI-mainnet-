@@ -106,4 +106,18 @@ echo "Ожидаем газ ниже или равный $POPM_STATIC_FEE... д�
 while true; do
     gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
     if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-        echo
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+        sleep 30
+        continue
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+
+    if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+        echo "Газ в норме, запускаем майнер..."
+        cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
+        break
+    else
+        echo "Газ слишком высокий, продолжаем ожидание..."
+        sleep 30
+    fi
+done
