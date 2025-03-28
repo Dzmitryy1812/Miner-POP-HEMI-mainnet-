@@ -6,6 +6,7 @@ echo "=== HEMI Miner Installer ==="
 MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
 CONFIG_FILE="$MINER_DIR/config.sh"
 MINER_PID=""
+TAIL_PID=""
 
 # Проверка прав root
 if [ "$EUID" -ne 0 ]; then
@@ -85,32 +86,83 @@ fi
 # --- Меню выбора ---
 cd "$MINER_DIR" || exit 1
 
-monitor_gas() {
-    while true; do
-        gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
-        if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
-            echo "Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
-            sleep 30
-            continue
-        fi
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
-        
-        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
-            if ! pgrep -f "popmd" > /dev/null; then
-                echo "Газ в пределах нормы ($gas_price <= $POPM_STATIC_FEE), запускаем майнер..."
-                # Запускаем майнер в фоновом режиме с перенаправлением логов
-                bash -c "source $CONFIG_FILE && ./popmd" > miner.log 2>&1 &
-                MINER_PID=$!
-                sleep 5
-                if ps -p "$MINER_PID" > /dev/null; then
-                    echo "Майнер запущен с PID: $MINER_PID"
-                    echo "Логи майнера выводятся ниже (также сохраняются в $MINER_DIR/miner.log):"
-                    tail -f miner.log &  # Показываем логи в реальном времени
-                    TAIL_PID=$!
-                else
-                    echo "Ошибка: Майнер не запустился!"
-                fi
+while true; do
+    echo ""
+    echo "===== Меню управления майнером ====="
+    echo "1) Запустить мониторинг газа и майнера"
+    echo "2) Редактировать конфиг (nano)"
+    echo "3) Выход"
+    read -p "Выберите действие: " choice
+    case $choice in
+        1)
+            echo "Запускаем мониторинг газа..."
+            # Останавливаем существующий tail, если он есть
+            if [ -n "$TAIL_PID" ]; then
+                kill $TAIL_PID 2>/dev/null
+                TAIL_PID=""
             fi
-        else
+            while true; do
+                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r .fastestFee 2>/dev/null)
+                if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
+                    echo "Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
+                    sleep 30
+                    continue
+                fi
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+                
+                if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+                    if ! pgrep -f "popmd" > /dev/null; then
+                        echo "Газ в пределах нормы ($gas_price <= $POPM_STATIC_FEE), запускаем майнер..."
+                        bash -c "source $CONFIG_FILE && ./popmd" > miner.log 2>&1 &
+                        MINER_PID=$!
+                        sleep 5
+                        if ps -p "$MINER_PID" > /dev/null; then
+                            echo "Майнер запущен с PID: $MINER_PID"
+                            echo "Логи майнера (также сохраняются в $MINER_DIR/miner.log):"
+                            tail -f miner.log &
+                            TAIL_PID=$!
+                        else
+                            echo "Ошибка: Майнер не запустился!"
+                        fi
+                    else
+                        echo "Майнер уже работает (Газ: $gas_price <= $POPM_STATIC_FEE)"
+                    fi
+                else
+                    if pgrep -f "popmd" > /dev/null; then
+                        echo "Газ превышает порог ($gas_price > $POPM_STATIC_FEE), останавливаем майнер..."
+                        pkill -f "popmd"
+                        if [ -n "$TAIL_PID" ]; then
+                            kill $TAIL_PID 2>/dev/null
+                            TAIL_PID=""
+                        fi
+                        MINER_PID=""
+                        echo "Майнер остановлен"
+                    else
+                        echo "Майнер не работает, ждем снижения газа ($gas_price > $POPM_STATIC_FEE)..."
+                    fi
+                fi
+                sleep 30
+            done
+            ;;
+        2)
+            nano "$CONFIG_FILE"
+            chmod +x "$CONFIG_FILE"
+            echo "Конфиг отредактирован. Перезапустите майнер, если он работает."
+            source "$CONFIG_FILE"
+            ;;
+        3)
             if pgrep -f "popmd" > /dev/null; then
-                echo "Газ превышает порог ($gas_price > $POPM_STATIC
+                echo "Останавливаем майнер перед выходом..."
+                pkill -f "popmd"
+            fi
+            if [ -n "$TAIL_PID" ]; then
+                kill $TAIL_PID 2>/dev/null
+            fi
+            echo "Выход из программы"
+            exit 0
+            ;;
+        *)
+            echo "Неверный ввод! Выберите 1, 2 или 3."
+            ;;
+    esac
+done
