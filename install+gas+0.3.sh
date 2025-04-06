@@ -81,8 +81,7 @@ start_miner() {
         if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
             echo "Газ в норме, запускаем майнер..."
 
-            # Запускаем майнер с комиссией 1.3 (если ты ввёл 1)
-            sed -i "s/^export POPM_STATIC_FEE=.*$/export POPM_STATIC_FEE=1.3/" "$CONFIG_FILE"
+            # Не нужно менять комиссию вручную, используем уже введенное значение
             cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
 
             # Запоминаем PID майнера
