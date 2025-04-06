@@ -11,7 +11,7 @@ if [ "$EUID" -ne 0 ]; then
 fi
 
 # Список необходимых пакетов
-PACKAGES="jq curl wget unzip nano bc"
+PACKAGES="jq curl wget unzip nano"
 
 # Функция установки пакетов
 install_packages() {
@@ -47,42 +47,48 @@ echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
 read -p "Введите POPM_STATIC_FEE (например 1, 2, 3): " static_fee
 if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-    echo "Ошибка: POPM_STATIC_FEE должен быть целым числом!"
+    echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
     exit 1
 fi
-
-# Добавим 0.3 к значению
-static_fee_final=$(echo "$static_fee + 0.3" | bc)
-
 cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
 export POPM_BTC_PRIVKEY=${btc_key}
-export POPM_STATIC_FEE=${static_fee_final}
+export POPM_STATIC_FEE=${static_fee}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
-
 chmod +x "$CONFIG_FILE"
-echo "✅ Конфиг обновлен! Установлена комиссия: ${static_fee_final} sat/vB"
+echo "✅ Конфиг обновлен! Установлена комиссия: $static_fee sat/vB"
 source "$CONFIG_FILE"
 
-# Функция запуска майнера с проверкой газа
+# Функция для запуска майнера с проверкой газа
 start_miner() {
     while true; do
+        # Получаем текущую цену газа
         gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
+        
+        # Проверяем, что получена корректная цена
         if [ -z "$gas_price" ] || ! [[ "$gas_price" =~ ^[0-9]+$ ]]; then
             echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить данные о газе. Повтор через 30 секунд..."
             sleep 30
             continue
         fi
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
 
-        if (( gas_price <= $(echo "$POPM_STATIC_FEE" | cut -d'.' -f1) )); then
+        # Печатаем текущую цену газа и порог для майнера
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+        
+        # Сравниваем газ с порогом
+        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
             echo "Газ в норме, запускаем майнер..."
-            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd & 
+
+            # Запускаем майнер с комиссией 1.3 (если ты ввёл 1)
+            sed -i "s/^export POPM_STATIC_FEE=.*$/export POPM_STATIC_FEE=1.3/" "$CONFIG_FILE"
+            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
+
+            # Запоминаем PID майнера
             miner_pid=$!
             wait $miner_pid
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу. Перезапуск после 10 минутного таймаута..."
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу. Перезапуск через 10 минут..."
             sleep 600  # 10 минутный таймаут
         else
             echo "Газ слишком высокий, продолжаем ожидание..."
@@ -101,4 +107,3 @@ trap cleanup INT
 
 # Старт
 start_miner
-
