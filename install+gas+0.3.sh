@@ -45,16 +45,16 @@ fi
 echo ""
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
-read -p "Введите газ, который следует ждать (например 1): " gas_to_wait
 read -p "Введите газ, который следует установить в файле (например 1.3): " gas_to_set
+read -p "Введите газ, который следует ожидать для запуска майнера (например 1): " gas_to_wait
 
-# Проверка, что оба значения числовые
-if ! [[ "$gas_to_wait" =~ ^[0-9]+$ ]] || ! [[ "$gas_to_set" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
-    echo "Ошибка: Значения газа должны быть числами!"
+# Проверка, что значение газа является числом
+if ! [[ "$gas_to_set" =~ ^[0-9]+(\.[0-9]+)?$ ]] || ! [[ "$gas_to_wait" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "Ошибка: Газ для транзакции и для ожидания должны быть числами!"
     exit 1
 fi
 
-# Обновление конфигурационного файла с заданным значением газа
+# Применяем значение газа для транзакций в конфиг
 cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
 export POPM_BTC_PRIVKEY=${btc_key}
@@ -63,8 +63,11 @@ export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
 chmod +x "$CONFIG_FILE"
-echo "✅ Конфиг обновлен! Установлена комиссия: $gas_to_set sat/vB"
+echo "✅ Конфиг обновлен! Установлена комиссия: $gas_to_set sat/vB для транзакций"
 source "$CONFIG_FILE"
+
+# Устанавливаем переменную для газа для ожидания
+GAS_TO_WAIT=$gas_to_wait
 
 # Функция для запуска майнера с проверкой газа
 start_miner() {
@@ -80,16 +83,13 @@ start_miner() {
         fi
 
         # Печатаем текущую цену газа и порог для майнера
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог для ожидания: $gas_to_wait sat/vB)"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог для ожидания: $GAS_TO_WAIT sat/vB)"
         
         # Сравниваем газ с порогом для ожидания
-        if [ "$gas_price" -le "$gas_to_wait" ]; then
+        if [ "$gas_price" -le "$GAS_TO_WAIT" ]; then
             echo "Газ в норме, запускаем майнер..."
 
-            # Здесь мы устанавливаем газ для майнера в конфиге
-            sed -i "s/^export POPM_STATIC_FEE=.*$/export POPM_STATIC_FEE=${gas_to_set}/" "$CONFIG_FILE"
-
-            # Запускаем майнер с обновленной комиссией
+            # Запускаем майнер с заданной комиссией
             cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
 
             # Запоминаем PID майнера
