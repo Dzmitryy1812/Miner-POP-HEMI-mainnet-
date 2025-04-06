@@ -80,9 +80,9 @@ start_miner() {
         fi
 
         # Печатаем текущую цену газа и порог для майнера
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $gas_to_wait sat/vB)"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог для ожидания: $gas_to_wait sat/vB)"
         
-        # Сравниваем газ с порогом
+        # Сравниваем газ с порогом для ожидания
         if [ "$gas_price" -le "$gas_to_wait" ]; then
             echo "Газ в норме, запускаем майнер..."
 
