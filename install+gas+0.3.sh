@@ -45,20 +45,25 @@ fi
 echo ""
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
-read -p "Введите POPM_STATIC_FEE (например 1, 2, 3): " static_fee
-if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-    echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
+read -p "Введите газ, который следует ждать (например 1): " gas_to_wait
+read -p "Введите газ, который следует установить в файле (например 1.3): " gas_to_set
+
+# Проверка, что оба значения числовые
+if ! [[ "$gas_to_wait" =~ ^[0-9]+$ ]] || ! [[ "$gas_to_set" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then
+    echo "Ошибка: Значения газа должны быть числами!"
     exit 1
 fi
+
+# Обновление конфигурационного файла с заданным значением газа
 cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
 export POPM_BTC_PRIVKEY=${btc_key}
-export POPM_STATIC_FEE=${static_fee}
+export POPM_STATIC_FEE=${gas_to_set}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
 chmod +x "$CONFIG_FILE"
-echo "✅ Конфиг обновлен! Установлена комиссия: $static_fee sat/vB"
+echo "✅ Конфиг обновлен! Установлена комиссия: $gas_to_set sat/vB"
 source "$CONFIG_FILE"
 
 # Функция для запуска майнера с проверкой газа
@@ -75,13 +80,16 @@ start_miner() {
         fi
 
         # Печатаем текущую цену газа и порог для майнера
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $gas_to_wait sat/vB)"
         
         # Сравниваем газ с порогом
-        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+        if [ "$gas_price" -le "$gas_to_wait" ]; then
             echo "Газ в норме, запускаем майнер..."
 
-            # Не нужно менять комиссию вручную, используем уже введенное значение
+            # Здесь мы устанавливаем газ для майнера в конфиге
+            sed -i "s/^export POPM_STATIC_FEE=.*$/export POPM_STATIC_FEE=${gas_to_set}/" "$CONFIG_FILE"
+
+            # Запускаем майнер с обновленной комиссией
             cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
 
             # Запоминаем PID майнера
