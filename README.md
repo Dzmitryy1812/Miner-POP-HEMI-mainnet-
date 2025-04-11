@@ -1,5 +1,3 @@
-Вот полный перевод гайда на английский язык, адаптированный для публикации на GitHub:
-
 ---
 
 # Installing the Miner on the HEMI Mainnet
