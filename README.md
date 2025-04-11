@@ -138,5 +138,3 @@ Go to [mempool.space](https://mempool.space) and search using your **public BTC 
 🔥 **Happy mining!** 🔥
 
 ---
-
-Если нужно — могу сразу оформить этот гайд как `.md` файл для загрузки на GitHub.
