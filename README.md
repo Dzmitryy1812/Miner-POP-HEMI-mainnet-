@@ -1,132 +1,144 @@
-# Установка майнера в майнете HEMI
+Вот полный перевод гайда на английский язык, адаптированный для публикации на GitHub:
+
+---
+
+# Installing the Miner on the HEMI Mainnet
 ![image](https://github.com/user-attachments/assets/a5f04dd4-2f30-4d51-93f1-7c71e7e6197d)
 
-## ⚡ Важное замечание
-Майнинг в сети HEMI — недешёвое удовольствие, стоимость работы майнера составляет около **200 долларов в сутки**. (Ловите низкий газ)
+## ⚡ Important Note
+Mining on the HEMI network is **not cheap** — the cost of running the miner is around **$200 per day**. (Make sure to catch low gas fees!)
 
-## 📌 Требования
-Для установки потребуется сервер. Можно арендовать, например, на [VDSina](https://www.vdsina.com/?partner=dd4tc21l55), где есть удобная посуточная оплата.  
-Есть два варианта установки:  
-1. **С помощью скрипта** — для ленивых.   
-2. **Ручная установка** — для тех, кто хочет познать процесс майнинга в полной мере. 
+## 📌 Requirements
+You'll need a server to install the miner. You can rent one, for example, on [VDSina](https://www.vdsina.com/?partner=dd4tc21l55), which offers convenient daily payments.  
+There are two installation methods:  
+1. **Using a script** — for those who prefer a quick setup.  
+2. **Manual installation** — for those who want to understand the process in detail.
 
-### 🔧 Рекомендуемые параметры сервера:
-- **ОС:** Ubuntu 20.04  
-- **Процессор:** 2 core  
-- **Память:** 4 GB  
-- **Хранилище:** 80 GB  
+### 🔧 Recommended Server Specs:
+- **OS:** Ubuntu 20.04  
+- **CPU:** 2 cores  
+- **RAM:** 4 GB  
+- **Storage:** 80 GB  
+
+---
+
+## 🚀 Creating a Wallet
+
+1. Install **UniSat** and create a new wallet.
+2. Fund your BTC balance (select **Legacy P2PKH** address type).
+3. To fund your wallet, you can use [Symbiosis](https://app.symbiosis.finance/) (fee ~3$ via Ethereum network). Thanks to @jonnyboii for the tip.
 
 ---
 
-## 🚀 Создание кошелька
+## 🔧 Option 1: Installation via Script (Quick and Easy)
 
-1. Устанавливаем **UniSat** и создаем новый кошелек.
-2. Пополняем баланс BTC (выбираем **Legacy P2PKH**).
-3. Для пополнения можно воспользоваться [Symbiosis](https://app.symbiosis.finance/) (комиссия ~3$ в сети Ethereum). за информацию спасибо @jonnyboii 
-
----
-## 🔧 Вариант 1: Установка через скрипт (быстро и просто)
-
-1. Скачайте и выполните скрипт:
+1. Download and run the script:
    ```bash
    wget -O install_gas.sh https://raw.githubusercontent.com/Dzmitryy1812/Miner-POP-HEMI-mainnet-/refs/heads/main/install%2Bgas.sh && chmod +x install_gas.sh && ./install_gas.sh
-![image](https://github.com/user-attachments/assets/96b322fd-3042-460a-87a6-4cab4fbaeab3)
+   ```
 
+   ![image](https://github.com/user-attachments/assets/96b322fd-3042-460a-87a6-4cab4fbaeab3)
 
-Для начала работы с майнером вам нужно будет ввести два параметра:
+To get started, the script will ask you for two inputs:
 
-1. **Приватный ключ BTC** — ваш личный ключ для сети Bitcoin.
-2. **POPM_STATIC_FEE** — значение комиссии за газ, которое можно узнать на [mempool.space](https://mempool.space).
+1. **BTC Private Key** — your private key for the Bitcoin network.
+2. **POPM_STATIC_FEE** — the gas fee value, which you can check at [mempool.space](https://mempool.space).
 
-После ввода этих данных скрипт автоматически:
-- Обновит вашу систему
-- Установит все необходимые пакеты
-- Скачает майнер
-- И будет ожидать, когда цена газа опустится до указанного вами значения, после чего автоматически запустит майнер.
-  
-![image](https://github.com/user-attachments/assets/8c4d9e3b-0cca-46c6-bb1e-a6114a57edb4)
+After that, the script will:
+- Update your system
+- Install required packages
+- Download the miner
+- Monitor the gas price, and once it falls below your specified threshold, it will launch the miner automatically
 
+   ![image](https://github.com/user-attachments/assets/8c4d9e3b-0cca-46c6-bb1e-a6114a57edb4)
 
-Для остановки процесса используется команда CTRL+C.
-Важно!! Скрипт мониторит газ только при запуске. 
-## 🔧 Вариант 2: Установка майнера на сервере (ручной способ)
+To stop the process, press `CTRL+C`.  
+**Important:** The script only monitors gas **at startup**, not continuously.
 
-### 🔹 Обновляем среду и устанавливаем нужные пакеты:
+---
+
+## 🔧 Option 2: Manual Miner Installation
+
+### 🔹 Update your system and install dependencies:
 ```sh
 sudo apt update && sudo apt upgrade -y && sudo apt install wget unzip nano curl -y
 ```
 
-### 🔹 Скачиваем майнер с официального GitHub:
+### 🔹 Download the miner from the official GitHub:
 ```sh
 wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
 ```
 
-### 🔹 Распаковываем архив:
+### 🔹 Extract the archive:
 ```sh
 tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
 ```
 
-### 🔹 Устанавливаем **screen** для работы в фоновом режиме:
+### 🔹 Install **screen** for background execution:
 ```sh
 sudo apt install screen
 ```
-Создаем новую сессию:
+
+Start a new screen session:
 ```sh
 screen -S hemi_miner
 ```
 
-### 🔹 Переходим в папку с майнером:
+### 🔹 Enter the miner directory:
 ```sh
 cd heminetwork_v1.0.0_linux_amd64
 ```
 
-### 🔹 Проверяем конфигурационный файл:
+### 🔹 Check the miner options:
 ```sh
 ./popmd --help
 ```
 
 ---
 
-## 🛠️ Шаг 3. Настройка майнера
+## 🛠️ Step 3. Miner Configuration
 
-Редактируем конфигурацию:
+Set environment variables:
 ```sh
-export POPM_BTC_PRIVKEY=сюда_вставляем_приватный_ключ
+export POPM_BTC_PRIVKEY=your_private_key_here
 export POPM_STATIC_FEE=4
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 ```
 
-**💡 Узнать текущее значение `POPM_STATIC_FEE` можно на [mempool.space](https://mempool.space).**
+**💡 You can find the current `POPM_STATIC_FEE` value at [mempool.space](https://mempool.space).**
 
 ---
 
-## 🚴 Шаг 4. Запуск майнера
+## 🚴 Step 4. Start the Miner
 ```sh
 ./popmd
 ```
 
-Поздравляем! 🎉 Теперь ваш майнер работает в сети HEMI.
+Congratulations! 🎉 Your miner is now live on the HEMI network.
 
 ---
 
-## ❓ Частые вопросы
+## ❓ Frequently Asked Questions
 
-### Как возобновить сеанс screen, если отключился?
+### How to resume a screen session after disconnection?
 ```sh
 screen -r hemi_miner
 ```
 
-### Как завершить работу майнера?
+### How to stop the miner?
 ```sh
 exit
 ```
-### Как посмотреть транзакции?
 
-[mempool](https://mempool.space)
-и вставляем в поиск публичный ключ 
+### How to view your transactions?
+
+Go to [mempool.space](https://mempool.space) and search using your **public BTC address**.
+
 ---
 
-🔥 **Удачного майнинга!** 🔥
+🔥 **Happy mining!** 🔥
 
+---
 
+Если нужно — могу сразу оформить этот гайд как `.md` файл для загрузки на GitHub.
