@@ -37,7 +37,7 @@ if [ -d "$MINER_DIR" ]; then
 else
     echo "Майнер не найден, начинаем установку..."
     apt update && apt upgrade -y
-    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    wget https://github.com/hemilabs/heminetwork/releases/download/v1.1.0/heminetwork_v1.1.0_linux_amd64.tar.gz
     tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
 fi
 
