@@ -64,12 +64,12 @@ sudo apt update && sudo apt upgrade -y && sudo apt install wget unzip nano curl 
 
 ### 🔹 Download the miner from the official GitHub:
 ```sh
-wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.1.0_linux_amd64.tar.gz
 ```
 
 ### 🔹 Extract the archive:
 ```sh
-tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
+tar -xvzf heminetwork_v1.1.0_linux_amd64.tar.gz
 ```
 
 ### 🔹 Install **screen** for background execution:
