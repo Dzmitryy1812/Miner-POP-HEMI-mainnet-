@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Параметры
-VERSION="v1.1.0"
+VERSION="v1.0.0"
 ARCHIVE="heminetwork_${VERSION}_linux_amd64.tar.gz"
 FOLDER="heminetwork_${VERSION}_linux_amd64"
 MINER_DIR="$HOME/$FOLDER"
@@ -81,7 +81,7 @@ start_miner() {
 
         if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
             echo "✅ Газ в норме, запускаем майнер..."
-            cd "$MINER_DIR" && ./popmd &
+            cd "$MINER_DIR" && nohup ./popmd > miner.log 2>&1 &
             miner_pid=$!
             wait $miner_pid
             echo "$(date '+%Y-%m-%d %H:%M:%S') - ℹ️ Майнер завершил работу. Перезапуск через 10 минут..."
