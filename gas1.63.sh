@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Параметры
-MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
+MINER_DIR="$HOME/heminetwork_v1.6.3_linux_amd64"
 CONFIG_FILE="$MINER_DIR/config.sh"
 
 # Загружаем параметры из конфига
