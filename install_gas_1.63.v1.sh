@@ -78,8 +78,8 @@ start_miner_single_tx() {
             # Создаем временный файл для логов
             LOG_FILE="/tmp/popmd_$$.log"
             
-            # Запускаем майнер с перенаправлением логов
-            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd > "$LOG_FILE" 2>&1 & 
+            # Запускаем майнер с перенаправлением логов и выводом в консоль
+            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd 2>&1 | tee "$LOG_FILE" & 
             miner_pid=$!
             
             # Ждем первую транзакцию по логам
@@ -91,20 +91,24 @@ start_miner_single_tx() {
                 if grep -q "Successfully broadcast PoP transaction" "$LOG_FILE" 2>/dev/null; then
                     echo "$(date '+%Y-%m-%d %H:%M:%S') - Первая транзакция отправлена!"
                     transaction_sent=true
+                    # Немедленно останавливаем майнер
+                    if kill -0 $miner_pid 2>/dev/null; then
+                        kill $miner_pid
+                    fi
                     break
                 fi
-                sleep 2
-                timeout_counter=$((timeout_counter + 2))
+                sleep 1  # Проверяем каждую секунду вместо 2
+                timeout_counter=$((timeout_counter + 1))
             done
             
-            # Останавливаем майнер после первой транзакции
+            # Проверяем, нужно ли еще остановить майнер
             if kill -0 $miner_pid 2>/dev/null; then
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Останавливаем майнер после первой транзакции..."
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - Останавливаем майнер..."
                 kill $miner_pid
                 wait $miner_pid 2>/dev/null
                 echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер остановлен"
             else
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер уже завершился самостоятельно"
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер уже завершился"
             fi
             
             # Удаляем временный файл логов
