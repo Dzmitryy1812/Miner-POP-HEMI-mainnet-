@@ -68,15 +68,30 @@ log_message "Майнер запущен, начинаем мониторинг 
 monitor_gas_and_transactions "$POPM_STATIC_FEE" &
 monitor_pid=$!
 
-# Основной цикл ожидания завершения майнера
-while pgrep -f "popmd" > /dev/null; do
-    sleep 5
-done
-
-log_message "Майнер завершил работу."
-
-# Останавливаем мониторинг
-kill $monitor_pid 2>/dev/null
-
-# Удаляем временный файл логов
-rm -f "/tmp/popmd_$$.log" 
+# Основной цикл - ждем завершения майнера и готовимся к следующему запуску
+while true; do
+    # Ждем завершения майнера
+    while pgrep -f "popmd" > /dev/null; do
+        sleep 5
+    done
+    
+    log_message "Майнер завершил работу."
+    
+    # Останавливаем текущий мониторинг
+    kill $monitor_pid 2>/dev/null
+    
+    # Удаляем временный файл логов
+    rm -f "/tmp/popmd_$$.log"
+    
+    # Ждем следующего запуска майнера
+    log_message "Ожидаем следующий запуск майнера..."
+    while ! pgrep -f "popmd" > /dev/null; do
+        sleep 5
+    done
+    
+    log_message "Майнер запущен снова, возобновляем мониторинг..."
+    
+    # Запускаем мониторинг снова
+    monitor_gas_and_transactions "$POPM_STATIC_FEE" &
+    monitor_pid=$!
+done 
