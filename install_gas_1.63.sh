@@ -94,12 +94,9 @@ start_miner() {
 
         if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
             echo "Газ в норме, запускаем майнер..."
-            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
-            miner_pid=$!
-            wait $miner_pid
-            # Проверяем код выхода майнера
-            miner_exit_code=$?
-            if [ $miner_exit_code -eq 0 ]; then
+            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd > miner_output.log 2>&1
+            # Проверяем вывод майнера на успешное завершение
+            if grep -q "PoP miner has shutdown cleanly" miner_output.log; then
                 echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу с успешной транзакцией. Ожидаем новый блок..."
                 wait_for_new_block
             else
