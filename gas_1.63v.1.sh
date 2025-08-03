@@ -22,6 +22,18 @@ get_current_block() {
     fi
 }
 
+# --- Функция проверки статуса транзакции ---
+check_transaction_status() {
+    local tx_hash=$1
+    local status=$(curl -s "https://blockstream.info/api/tx/$tx_hash" 2>/dev/null | jq -r '.status.block_height' 2>/dev/null)
+    
+    if [ "$status" = "null" ] || [ -z "$status" ]; then
+        echo "unconfirmed"
+    else
+        echo "confirmed"
+    fi
+}
+
 # --- Функция ожидания нового блока ---
 wait_for_new_block() {
     local start_block=$(get_current_block)
@@ -78,6 +90,35 @@ wait_for_specific_block() {
     fi
 }
 
+# --- Функция ожидания завершения блока ---
+wait_for_block_completion() {
+    local target_block=$1
+    local current_block=$(get_current_block)
+    local timeout_seconds=600  # 10 минут максимум
+    
+    log_message "Ожидаем завершение блока: $target_block (текущий: $current_block)"
+    
+    local elapsed=0
+    # Ждем пока текущий блок станет больше целевого (блок завершен)
+    while [ "$current_block" -le "$target_block" ] && [ $elapsed -lt $timeout_seconds ]; do
+        sleep 30  # Проверяем каждые 30 секунд
+        current_block=$(get_current_block)
+        elapsed=$((elapsed + 30))
+        
+        if [ $((elapsed % 120)) -eq 0 ]; then  # Каждые 2 минуты
+            log_message "Ожидание завершения блока $target_block... Текущий: $current_block, прошло: $((elapsed / 60)) минут"
+        fi
+    done
+    
+    if [ "$current_block" -gt "$target_block" ]; then
+        log_message "Блок $target_block завершен! Текущий блок: $current_block (прошло $((elapsed / 60)) минут)"
+        return 0
+    else
+        log_message "Таймаут ожидания завершения блока $target_block (10 минут)"
+        return 1
+    fi
+}
+
 # --- Функция мониторинга газа и транзакций ---
 monitor_gas_and_transactions() {
     gas_limit=$1
@@ -94,13 +135,25 @@ monitor_gas_and_transactions() {
         fi
         log_message "Газ: $gas_price sat/vB (Порог: $gas_limit sat/vB)"
 
-        # Проверяем газ
+        # Проверяем газ с учетом быстрого подтверждения
         if [ "$gas_price" -gt "$gas_limit" ]; then
             if pgrep -f "popmd" > /dev/null; then
                 log_message "Газ превышает порог ($gas_price > $gas_limit), останавливаем майнер..."
                 pkill -f "popmd"
                 log_message "Майнер остановлен"
             fi
+        fi
+        
+        # Получаем порог газа из конфига
+        gas_threshold=$((POPM_STATIC_FEE - 1))
+        
+        # Проверяем оптимальные условия для майнинга
+        if [ "$gas_price" -le "$gas_threshold" ] && pgrep -f "popmd" > /dev/null; then
+            log_message "Газ оптимальный ($gas_price <= $gas_threshold), майнер может работать с комиссией $POPM_STATIC_FEE sat/vB"
+        elif [ "$gas_price" -gt "$POPM_STATIC_FEE" ] && pgrep -f "popmd" > /dev/null; then
+            log_message "Газ слишком высокий ($gas_price > $POPM_STATIC_FEE), останавливаем майнер для экономии..."
+            pkill -f "popmd"
+            log_message "Майнер остановлен из-за высокого газа"
         fi
         
         # Проверяем транзакции если майнер запущен
@@ -140,14 +193,17 @@ monitor_gas_and_transactions() {
                 pkill -f "popmd"
                 log_message "Майнер остановлен после первой транзакции"
                 
-                # Ждем следующий блок (current_block + 1)
-                next_block=$((current_block + 1))
-                log_message "Ожидаем блок $next_block..."
-                if wait_for_specific_block "$next_block"; then
-                    log_message "Блок $next_block найден, готов к следующему циклу"
+                # Ждем завершения текущего блока (чтобы транзакция попала в правильный блок)
+                log_message "Ожидаем завершение текущего блока $current_block..."
+                if wait_for_block_completion "$current_block"; then
+                    log_message "Блок $current_block завершен, транзакция должна попасть в правильный блок"
                 else
-                    log_message "Таймаут ожидания блока $next_block, продолжаем работу"
+                    log_message "Таймаут ожидания завершения блока $current_block"
                 fi
+                
+                # Короткая пауза перед следующим циклом
+                log_message "Короткая пауза перед следующим циклом..."
+                sleep 30
             fi
         fi
         
