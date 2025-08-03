@@ -158,6 +158,13 @@ monitor_gas_and_transactions() {
         
         # Проверяем транзакции если майнер запущен
         if pgrep -f "popmd" > /dev/null; then
+            # Проверяем, есть ли файл логов
+            if [ ! -f "$LOG_FILE" ]; then
+                log_message "⚠️  Файл логов не найден: $LOG_FILE"
+            elif [ ! -s "$LOG_FILE" ]; then
+                log_message "⚠️  Файл логов пуст: $LOG_FILE"
+            fi
+            
             # Проверяем логи на наличие успешной транзакции
             if [ -f "$LOG_FILE" ] && grep -q "Successfully broadcast PoP transaction" "$LOG_FILE" 2>/dev/null; then
                 # Получаем текущий блок Bitcoin
@@ -231,6 +238,39 @@ while true; do
     done
     
     log_message "Майнер завершил работу."
+    
+    # Проверяем логи перед удалением
+    if [ -f "/tmp/popmd_$$.log" ]; then
+        log_message "=== АНАЛИЗ ЛОГОВ МАЙНЕРА ==="
+        if [ -s "/tmp/popmd_$$.log" ]; then
+            log_message "Последние строки логов майнера:"
+            tail -10 "/tmp/popmd_$$.log" | while read line; do
+                log_message "МАЙНЕР: $line"
+            done
+        else
+            log_message "Файл логов пуст - майнер не успел запуститься или завершился с ошибкой"
+        fi
+        
+        # Проверяем наличие транзакций
+        if grep -q "Successfully broadcast PoP transaction" "/tmp/popmd_$$.log" 2>/dev/null; then
+            tx_count=$(grep -c "Successfully broadcast PoP transaction" "/tmp/popmd_$$.log")
+            log_message "✅ Найдено транзакций: $tx_count"
+        else
+            log_message "❌ Транзакции не найдены в логах"
+        fi
+        
+        # Проверяем ошибки
+        if grep -q "ERROR\|error\|Error" "/tmp/popmd_$$.log" 2>/dev/null; then
+            log_message "⚠️  Найдены ошибки в логах:"
+            grep -i "error" "/tmp/popmd_$$.log" | tail -3 | while read line; do
+                log_message "ОШИБКА: $line"
+            done
+        fi
+        
+        log_message "=== КОНЕЦ АНАЛИЗА ==="
+    else
+        log_message "❌ Файл логов не найден"
+    fi
     
     # Останавливаем текущий мониторинг
     kill $monitor_pid 2>/dev/null
