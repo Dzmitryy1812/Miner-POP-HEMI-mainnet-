@@ -32,7 +32,7 @@ log_message() {
 monitor_gas_and_stop_miner() {
     gas_limit=$1
     # Параметры RPC нода Hemi (можно менять при необходимости)
-    local RPC_ENDPOINT="http://localhost:26657"
+    local RPC_ENDPOINT="wss://pop.hemi.network/v1/ws/public"
     local CHECK_INTERVAL=30
     
     # Параметры RPC нода Hemi (можно менять при необходимости)
