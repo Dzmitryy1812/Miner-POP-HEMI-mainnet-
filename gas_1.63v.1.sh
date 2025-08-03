@@ -144,14 +144,14 @@ monitor_gas_and_transactions() {
             fi
         fi
         
-        # Получаем порог газа из конфига
-        gas_threshold=$((POPM_STATIC_FEE - 1))
+        # Получаем порог газа из конфига (теперь равен комиссии)
+        gas_threshold=$POPM_STATIC_FEE
         
         # Проверяем оптимальные условия для майнинга
         if [ "$gas_price" -le "$gas_threshold" ] && pgrep -f "popmd" > /dev/null; then
             log_message "Газ оптимальный ($gas_price <= $gas_threshold), майнер может работать с комиссией $POPM_STATIC_FEE sat/vB"
-        elif [ "$gas_price" -gt "$POPM_STATIC_FEE" ] && pgrep -f "popmd" > /dev/null; then
-            log_message "Газ слишком высокий ($gas_price > $POPM_STATIC_FEE), останавливаем майнер для экономии..."
+        elif [ "$gas_price" -gt "$gas_threshold" ] && pgrep -f "popmd" > /dev/null; then
+            log_message "Газ слишком высокий ($gas_price > $gas_threshold), останавливаем майнер для экономии..."
             pkill -f "popmd"
             log_message "Майнер остановлен из-за высокого газа"
         fi
