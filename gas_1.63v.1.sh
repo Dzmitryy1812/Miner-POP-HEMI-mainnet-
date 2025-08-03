@@ -36,7 +36,7 @@ monitor_gas_and_stop_miner() {
     local CHECK_INTERVAL=30
     
     # Параметры RPC нода Hemi (можно менять при необходимости)
-    local RPC_ENDPOINT="http://localhost:26657"
+    local RPC_ENDPOINT="wss://pop.hemi.network/v1/ws/public"
     local CHECK_INTERVAL=30
     
     # Безопасная инициализация высоты блока
@@ -105,7 +105,21 @@ while pgrep -f "popmd" > /dev/null; do
 done
 
 log_message "Майнер завершил работу. Анализ логов..."
+# Проверка на успешные транзакции
 success_tx=$(grep -c "успешная транзакция" "$MINER_DIR/miner.log")
+
+# Ожидание нового блока
+while true; do
+    current_block_height=$(curl -s "${RPC_ENDPOINT}/status" | jq -r '.result.sync_info.latest_block_height' 2>/dev/null)
+    if [[ "$current_block_height" =~ ^[0-9]+$ ]]; then
+        log_message "Ожидание нового блока..."
+        sleep 30  # Ожидание перед следующей проверкой
+        break
+    else
+        log_message "Ошибка RPC: Нет связи с нодой. Повтор через 30 секунд..."
+        sleep 30
+    fi
+done
 
 if [ "$success_tx" -eq 0 ] && [ "$retry_count" -lt "$MAX_RETRIES" ]; then
     retry_count=$((retry_count+1))
