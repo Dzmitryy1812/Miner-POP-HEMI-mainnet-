@@ -9,14 +9,6 @@ if [ "$EUID" -ne 0 ]; then
     echo "Ошибка: Скрипт должен быть запущен с правами root (используйте sudo)."
     exit 1
 fi
-# Функция логирования
-log_message() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
-}
-# Функция логирования
-log_message() {
-    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
-}
 
 # Список необходимых пакетов
 PACKAGES="jq curl wget unzip nano"
@@ -66,10 +58,30 @@ export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
 chmod +x "$CONFIG_FILE"
-log_message "Конфиг обновлен!"
+echo "✅ Конфиг обновлен!"
 source "$CONFIG_FILE"
 
-# Функция запуска майнера с проверкой газа
+# Функция ожидания нового блока
+wait_for_new_block() {
+    last_block=$(curl -s https://mempool.space/api/v1/blocks/tip/height 2>/dev/null)
+    if ! [[ "$last_block" =~ ^[0-9]+$ ]]; then
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Ошибка: Не удалось получить номер блока. Повтор через 30 секунд..."
+        sleep 30
+        wait_for_new_block
+        return
+    fi
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - Ожидание нового блока..."
+    while true; do
+        current_block=$(curl -s https://mempool.space/api/v1/blocks/tip/height 2>/dev/null)
+        if [[ "$current_block" =~ ^[0-9]+$ ]] && [ "$current_block" -gt "$last_block" ]; then
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Новый блок $current_block обнаружен."
+            break
+        fi
+        sleep 10
+    done
+}
+
+# Функция запуска майнера с проверкой газа и ожиданием нового блока
 start_miner() {
     while true; do
         gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
@@ -82,26 +94,18 @@ start_miner() {
 
         if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
             echo "Газ в норме, запускаем майнер..."
-            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd & 
+            cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
             miner_pid=$!
             wait $miner_pid
-            log_message "Майнер завершил работу. Перезапуск после ожидания нового блока..."
-            while true; do
-                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
-                if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
-                    echo "Газ в норме, запускаем майнер..."
-                    cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
-                    miner_pid=$!
-                    wait $miner_pid
-                    log_message "Майнер завершил работу. Ожидаем новый блок..."
-                    while ! curl -s https://blockchain.info/q/getblockcount | grep -q "$(($(curl -s https://blockchain.info/q/getblockcount) + 1))"; do
-                        sleep 30
-                    done
-                else
-                    echo "Газ слишком высокий, продолжаем ожидание..."
-                    sleep 30
-                fi
-            done
+            # Проверяем код выхода майнера
+            miner_exit_code=$?
+            if [ $miner_exit_code -eq 0 ]; then
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу с успешной транзакцией. Ожидаем новый блок..."
+                wait_for_new_block
+            else
+                echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу без успешной транзакции. Повтор через 30 секунд..."
+                sleep 30
+            fi
         else
             echo "Газ слишком высокий, продолжаем ожидание..."
             sleep 30
