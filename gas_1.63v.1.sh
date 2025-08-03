@@ -1,4 +1,8 @@
-#!/bin/bash
+# Проверка наличия jq
+if ! command -v jq &> /dev/null; then
+    log_message "Ошибка: jq не установлен. Установите: sudo apt install jq"
+    exit 1
+fi
 
 # Параметры
 MINER_DIR="$HOME/heminetwork_v1.6.3_linux_amd64"
@@ -31,7 +35,19 @@ monitor_gas_and_stop_miner() {
     local RPC_ENDPOINT="http://localhost:26657"
     local CHECK_INTERVAL=30
     
-    local last_block_height=$(curl -s "${RPC_ENDPOINT}/status" | jq -r '.result.sync_info.latest_block_height')
+    # Параметры RPC нода Hemi (можно менять при необходимости)
+    local RPC_ENDPOINT="http://localhost:26657"
+    local CHECK_INTERVAL=30
+    
+    # Безопасная инициализация высоты блока
+    local last_block_height=0
+    local initial_height=$(curl -s "${RPC_ENDPOINT}/status" 2>/dev/null | jq -r '.result.sync_info.latest_block_height' 2>/dev/null)
+    if [[ "$initial_height" =~ ^[0-9]+$ ]]; then
+        last_block_height=$initial_height
+        log_message "Начальная высота блока: $last_block_height"
+    else
+        log_message "Предупреждение: Не удалось получить начальную высоту блока, начинаем с 0"
+    fi
     
     while true; do
         # Получаем высоту блока и газ
@@ -79,8 +95,24 @@ log_message "Майнер запущен, начинаем мониторинг 
 monitor_gas_and_stop_miner "$POPM_STATIC_FEE" &
 
 # Дополнительная проверка на случай если майнер завершил работу
+# Параметры перезапуска
+MAX_RETRIES=3
+RETRY_TIMEOUT=600  # 10 минут
+retry_count=0
+
 while pgrep -f "popmd" > /dev/null; do
     sleep 5
 done
 
-log_message "Майнер завершил работу."
+log_message "Майнер завершил работу. Анализ логов..."
+success_tx=$(grep -c "успешная транзакция" "$MINER_DIR/miner.log")
+
+if [ "$success_tx" -eq 0 ] && [ "$retry_count" -lt "$MAX_RETRIES" ]; then
+    retry_count=$((retry_count+1))
+    log_message "Нет успешных транзакций. Попытка $retry_count/$MAX_RETRIES через $RETRY_TIMEOUT сек"
+    sleep $RETRY_TIMEOUT
+    log_message "Перезапуск майнера..."
+    # Добавьте команду запуска майнера из install_1.63v1.sh
+else
+    log_message "Успешных транзакций: $success_tx. Работа завершена"
+fi
