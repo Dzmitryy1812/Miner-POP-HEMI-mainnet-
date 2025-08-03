@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Параметры
-MINER_DIR="$HOME/heminetwork_v1.6.3_linux_amd64"
+MINER_DIR="$HOME/heminetwork_v1.0.0_linux_amd64"
 CONFIG_FILE="$MINER_DIR/config.sh"
 
 # Проверка прав root
@@ -9,6 +9,14 @@ if [ "$EUID" -ne 0 ]; then
     echo "Ошибка: Скрипт должен быть запущен с правами root (используйте sudo)."
     exit 1
 fi
+# Функция логирования
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
+# Функция логирования
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
+}
 
 # Список необходимых пакетов
 PACKAGES="jq curl wget unzip nano"
@@ -37,8 +45,8 @@ if [ -d "$MINER_DIR" ]; then
 else
     echo "Майнер не найден, начинаем установку..."
     apt update && apt upgrade -y
-    wget https://github.com/hemilabs/heminetwork/releases/download/v1.6.3/heminetwork_v1.6.3_linux_amd64.tar.gz
-    tar -xvzf heminetwork_v1.6.3_linux_amd64.tar.gz
+    wget https://github.com/hemilabs/heminetwork/releases/download/v1.0.0/heminetwork_v1.0.0_linux_amd64.tar.gz
+    tar -xvzf heminetwork_v1.0.0_linux_amd64.tar.gz
 fi
 
 # Настройка конфига
@@ -58,7 +66,7 @@ export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
 chmod +x "$CONFIG_FILE"
-echo "✅ Конфиг обновлен!"
+log_message "Конфиг обновлен!"
 source "$CONFIG_FILE"
 
 # Функция запуска майнера с проверкой газа
@@ -77,8 +85,8 @@ start_miner() {
             cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd & 
             miner_pid=$!
             wait $miner_pid
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу. Перезапуск после 10 минутного таймаута..."
-            sleep 600  # 10 минутный таймаут
+            log_message "Майнер завершил работу. Перезапуск после ожидания нового блока..."
+            while ! curl -s https://blockchain.info/q/getblockcount | grep -q "$(($(curl -s https://blockchain.info/q/getblockcount) + 1))"; do sleep 30; done
         else
             echo "Газ слишком высокий, продолжаем ожидание..."
             sleep 30
