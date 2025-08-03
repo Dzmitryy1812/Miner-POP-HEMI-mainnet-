@@ -12,6 +12,14 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
+# Обработчик Ctrl+C
+cleanup() {
+    log_message "Прерывание скрипта..."
+    pkill -f "popmd"
+    exit 0
+}
+trap cleanup INT
+
 # --- Функция мониторинга газа ---
 monitor_gas_and_stop_miner() {
     gas_limit=$1
