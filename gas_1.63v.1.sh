@@ -12,6 +12,44 @@ log_message() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') - $1"
 }
 
+# --- Функция получения текущего блока Bitcoin ---
+get_current_block() {
+    current_block=$(curl -s https://blockstream.info/api/blocks/tip/height 2>/dev/null)
+    if [ -z "$current_block" ] || ! [[ "$current_block" =~ ^[0-9]+$ ]]; then
+        echo "0"
+    else
+        echo "$current_block"
+    fi
+}
+
+# --- Функция ожидания нового блока ---
+wait_for_new_block() {
+    local start_block=$(get_current_block)
+    local current_block=$start_block
+    local timeout_seconds=1200  # 20 минут максимум
+    
+    log_message "Ожидаем новый блок. Текущий блок: $start_block"
+    
+    local elapsed=0
+    while [ "$current_block" -eq "$start_block" ] && [ $elapsed -lt $timeout_seconds ]; do
+        sleep 30  # Проверяем каждые 30 секунд
+        current_block=$(get_current_block)
+        elapsed=$((elapsed + 30))
+        
+        if [ $((elapsed % 300)) -eq 0 ]; then  # Каждые 5 минут
+            log_message "Ожидание нового блока... Прошло: $((elapsed / 60)) минут"
+        fi
+    done
+    
+    if [ "$current_block" -gt "$start_block" ]; then
+        log_message "Новый блок найден: $current_block (прошло $((elapsed / 60)) минут)"
+        return 0
+    else
+        log_message "Таймаут ожидания нового блока (20 минут)"
+        return 1
+    fi
+}
+
 # --- Функция мониторинга газа и транзакций ---
 monitor_gas_and_transactions() {
     gas_limit=$1
@@ -45,10 +83,13 @@ monitor_gas_and_transactions() {
                 pkill -f "popmd"
                 log_message "Майнер остановлен после первой транзакции"
                 
-                # Ждем 11 минут до следующего блока
-                log_message "Ожидание 11 минут до следующего блока..."
-                sleep 660
-                log_message "Таймаут завершен, готов к следующему циклу"
+                # Ждем новый блок вместо фиксированного таймаута
+                log_message "Ожидаем новый блок Bitcoin..."
+                if wait_for_new_block; then
+                    log_message "Новый блок найден, готов к следующему циклу"
+                else
+                    log_message "Таймаут ожидания блока, продолжаем работу"
+                fi
             fi
         fi
         
