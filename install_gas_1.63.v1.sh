@@ -51,9 +51,9 @@ if ! [[ "$gas_threshold" =~ ^[0-9]+$ ]]; then
     exit 1
 fi
 
-# Автоматически вычисляем комиссию (на 1 сат выше порога)
-transaction_fee=$((gas_threshold + 1))
-echo "✅ Комиссия транзакций будет установлена: $transaction_fee sat/vB (порог газа: $gas_threshold + 1)"
+# Комиссия равна порогу газа (без увеличения)
+transaction_fee=$gas_threshold
+echo "✅ Комиссия транзакций будет установлена: $transaction_fee sat/vB (равна порогу газа)"
 
 cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
