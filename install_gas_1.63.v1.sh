@@ -82,46 +82,13 @@ start_miner_single_tx() {
             cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd 2>&1 | tee "$LOG_FILE" & 
             miner_pid=$!
             
-            # Ждем первую транзакцию по логам
-            echo "$(date '+%Y-%m-%d %H:%M:%S') - Ожидаем первую транзакцию..."
-            transaction_sent=false
-            timeout_counter=0
+            # Ждем завершения майнера (мониторинг будет управлять остановкой)
+            wait $miner_pid
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер завершил работу."
             
-            while [ "$transaction_sent" = false ] && [ $timeout_counter -lt 60 ]; do
-                if grep -q "Successfully broadcast PoP transaction" "$LOG_FILE" 2>/dev/null; then
-                    echo "$(date '+%Y-%m-%d %H:%M:%S') - Первая транзакция отправлена!"
-                    transaction_sent=true
-                    # Немедленно останавливаем майнер
-                    if kill -0 $miner_pid 2>/dev/null; then
-                        kill $miner_pid
-                    fi
-                    break
-                fi
-                sleep 1  # Проверяем каждую секунду вместо 2
-                timeout_counter=$((timeout_counter + 1))
-            done
-            
-            # Проверяем, нужно ли еще остановить майнер
-            if kill -0 $miner_pid 2>/dev/null; then
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Останавливаем майнер..."
-                kill $miner_pid
-                wait $miner_pid 2>/dev/null
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер остановлен"
-            else
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Майнер уже завершился"
-            fi
-            
-            # Удаляем временный файл логов
-            rm -f "$LOG_FILE"
-            
-            # Определяем время ожидания в зависимости от отправки транзакции
-            if [ "$transaction_sent" = true ]; then
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Транзакция отправлена! Ожидание 11 минут до следующего блока..."
-                sleep 660  # 11 минут (660 секунд) до следующего блока
-            else
-                echo "$(date '+%Y-%m-%d %H:%M:%S') - Транзакция не отправлена. Сразу переходим к следующей проверке газа..."
-                # Не ждем, сразу проверяем газ снова
-            fi
+            # Короткая пауза перед следующей проверкой газа
+            echo "$(date '+%Y-%m-%d %H:%M:%S') - Короткая пауза перед следующей проверкой..."
+            sleep 30  # 30 секунд вместо 10 минут
         else
             echo "Газ слишком высокий, продолжаем ожидание..."
             sleep 30
