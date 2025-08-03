@@ -45,15 +45,20 @@ fi
 echo ""
 echo "===== Настройка майнера ====="
 read -p "Введите ваш приватный ключ BTC: " btc_key
-read -p "Введите POPM_STATIC_FEE (например 4): " static_fee
-if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
-    echo "Ошибка: POPM_STATIC_FEE должен быть числом!"
+read -p "Введите порог газа для запуска майнера (например 1): " gas_threshold
+if ! [[ "$gas_threshold" =~ ^[0-9]+$ ]]; then
+    echo "Ошибка: Порог газа должен быть числом!"
     exit 1
 fi
+
+# Автоматически вычисляем комиссию (на 1 сат выше порога)
+transaction_fee=$((gas_threshold + 1))
+echo "✅ Комиссия транзакций будет установлена: $transaction_fee sat/vB (порог газа: $gas_threshold + 1)"
+
 cat > "$CONFIG_FILE" <<EOF
 #!/bin/bash
 export POPM_BTC_PRIVKEY=${btc_key}
-export POPM_STATIC_FEE=${static_fee}
+export POPM_STATIC_FEE=${transaction_fee}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 EOF
@@ -70,9 +75,9 @@ start_miner_single_tx() {
             sleep 30
             continue
         fi
-        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+        echo "$(date '+%Y-%m-%d %H:%M:%S') - Газ: $gas_price sat/vB (Запуск при <= $gas_threshold, комиссия: $POPM_STATIC_FEE sat/vB)"
 
-        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+        if [ "$gas_price" -le "$gas_threshold" ]; then
             echo "Газ в норме, запускаем майнер..."
             
             # Создаем временный файл для логов
