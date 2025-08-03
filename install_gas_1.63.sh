@@ -86,7 +86,22 @@ start_miner() {
             miner_pid=$!
             wait $miner_pid
             log_message "Майнер завершил работу. Перезапуск после ожидания нового блока..."
-            while ! curl -s https://blockchain.info/q/getblockcount | grep -q "$(($(curl -s https://blockchain.info/q/getblockcount) + 1))"; do sleep 30; done
+            while true; do
+                gas_price=$(curl -s https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null)
+                if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+                    echo "Газ в норме, запускаем майнер..."
+                    cd "$MINER_DIR" && source "$CONFIG_FILE" && ./popmd &
+                    miner_pid=$!
+                    wait $miner_pid
+                    log_message "Майнер завершил работу. Ожидаем новый блок..."
+                    while ! curl -s https://blockchain.info/q/getblockcount | grep -q "$(($(curl -s https://blockchain.info/q/getblockcount) + 1))"; do
+                        sleep 30
+                    done
+                else
+                    echo "Газ слишком высокий, продолжаем ожидание..."
+                    sleep 30
+                fi
+            done
         else
             echo "Газ слишком высокий, продолжаем ожидание..."
             sleep 30
