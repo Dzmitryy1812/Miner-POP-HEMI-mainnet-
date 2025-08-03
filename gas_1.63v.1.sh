@@ -56,7 +56,8 @@ monitor_gas_and_stop_miner() {
 
         # Проверка ошибок RPC
         if ! [[ "$current_block_height" =~ ^[0-9]+$ ]]; then
-            log_message "Ошибка RPC: Нет связи с нодой. Проверьте ${RPC_ENDPOINT}"
+            log_message "Ошибка RPC: Нет связи с нодой. Повтор через 30 секунд..."
+            sleep 30
             sleep $CHECK_INTERVAL
             continue
         fi
