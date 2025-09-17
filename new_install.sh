@@ -8,10 +8,11 @@ MINER_DIR="$HOME/heminetwork_${VERSION}_linux_amd64"
 CONFIG_FILE="$MINER_DIR/config.sh"
 PID_FILE="$MINER_DIR/popmd.pid"
 LAST_BLOCK_FILE="$MINER_DIR/.last_attempt_block"
-COOLDOWN_FLAG="$MINER_DIR/.cooldown"
+COOLDOWN_FLAG="$MINER_DIR/.cooldown" # устаревший флаг (сохраняем совместимость)
+WAIT_NEXT_FLAG="$MINER_DIR/.wait_next_block"
 LOG_FILE="$MINER_DIR/miner_output.log"
 
-# Время кулдауна в секундах (по умолчанию 600 = 10 минут)
+# Время кулдауна (больше не используется, оставлено для совместимости)
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-600}"
 
 # Требуемые утилиты
@@ -123,11 +124,11 @@ start_once_per_block_with_cooldown() {
     chmod +x ./popmd || true
 
     while true; do
-        # уважаем кулдаун
-        if [ -f "$COOLDOWN_FLAG" ]; then
-            log "Обнаружен кулдаун. Ждём ${COOLDOWN_SECONDS} сек перед перезапуском..."
-            rm -f "$COOLDOWN_FLAG"
-            sleep "$COOLDOWN_SECONDS"
+        # уважаем ожидание нового блока (вместо жёсткого кулдауна)
+        if [ -f "$WAIT_NEXT_FLAG" ]; then
+            log "Ожидание следующего блока перед новой попыткой..."
+            rm -f "$WAIT_NEXT_FLAG"
+            wait_for_new_block
         fi
 
         # газ
@@ -164,10 +165,19 @@ start_once_per_block_with_cooldown() {
             echo $miner_pid > "$PID_FILE"
             wait $miner_pid || true
 
-            # По завершении всегда вводим кулдаун
-            log "Завершили попытку на блок $current_block. Кулдаун ${COOLDOWN_SECONDS} сек..."
-            touch "$COOLDOWN_FLAG"
-            sleep "$COOLDOWN_SECONDS"
+            # Проверяем лог на успешную транзакцию и извлекаем TXID, если возможно
+            if grep -q "PoP miner has shutdown cleanly" "$LOG_FILE" 2>/dev/null; then
+                log "Успешная транзакция: майнер завершил работу корректно."
+            fi
+            txid=$(grep -Eoi '([a-f0-9]{64})' "$LOG_FILE" | tail -n1 || echo "")
+            if [[ "$txid" =~ ^[a-f0-9]{64}$ ]]; then
+                log "TXID: $txid"
+                log "Ссылка: https://mempool.space/tx/$txid"
+            fi
+
+            # После завершения — ожидаем следующий блок, чтобы не повторять в том же блоке
+            log "Завершили попытку на блок $current_block. Ждём следующий блок..."
+            wait_for_new_block
         else
             log "Газ слишком высокий, продолжаем ожидание..."
             sleep 30
@@ -191,20 +201,27 @@ monitor_gas_and_stop() {
                 if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1; then
                     log "[монитор] Газ > порога, останавливаем майнер (PID $pid)..."
                     kill "$pid" || true
-                    touch "$COOLDOWN_FLAG"
-                    log "[монитор] Установлен кулдаун ${COOLDOWN_SECONDS} сек"
+                    # фиксируем текущий блок и просим основной цикл ждать следующий
+                    tip=$(get_tip_block)
+                    if [[ "$tip" =~ ^[0-9]+$ ]]; then echo "$tip" > "$LAST_BLOCK_FILE"; fi
+                    touch "$WAIT_NEXT_FLAG"
+                    log "[монитор] Установлено ожидание следующего блока"
                 else
                     if pgrep -x popmd >/dev/null 2>&1; then
                         log "[монитор] Останавливаем popmd по имени процесса..."
                         pkill -x popmd || true
-                        touch "$COOLDOWN_FLAG"
+                        tip=$(get_tip_block)
+                        if [[ "$tip" =~ ^[0-9]+$ ]]; then echo "$tip" > "$LAST_BLOCK_FILE"; fi
+                        touch "$WAIT_NEXT_FLAG"
                     fi
                 fi
             else
                 if pgrep -x popmd >/dev/null 2>&1; then
                     log "[монитор] Останавливаем popmd по имени процесса..."
                     pkill -x popmd || true
-                    touch "$COOLDOWN_FLAG"
+                    tip=$(get_tip_block)
+                    if [[ "$tip" =~ ^[0-9]+$ ]]; then echo "$tip" > "$LAST_BLOCK_FILE"; fi
+                    touch "$WAIT_NEXT_FLAG"
                 fi
             fi
         fi
