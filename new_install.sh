@@ -25,6 +25,7 @@ SMOOTH_M="${SMOOTH_M:-5}"
 START_STREAK_K="${START_STREAK_K:-3}"
 BLOCK_WINDOW_SEC="${BLOCK_WINDOW_SEC:-0}"
 FEE_HISTORY_FILE="$MINER_DIR/.fee_history"
+FIRST_PUB_BLOCK_FILE="$MINER_DIR/.first_pub_block"
 
 # Telegram уведомления (опционально)
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
@@ -76,8 +77,11 @@ write_config() {
     echo ""
     echo "===== Настройка майнера ====="
     read -s -p "Введите ваш приватный ключ BTC: " btc_key; echo
-    read -p "Введите POPM_STATIC_FEE (например 1): " static_fee
+    read -p "Введите POPM_STATIC_FEE (газ, sat/vB, например 1): " static_fee
     read -p "Необязательно: BTC-адрес для мониторинга баланса (пусто чтобы пропустить): " btc_addr
+    read -p "Минимальный баланс в USD для работы (по умолчанию ${BALANCE_MIN_USD}): " min_usd
+    read -p "Необязательно: Telegram BOT TOKEN (пусто чтобы пропустить): " tg_token
+    read -p "Необязательно: Telegram CHAT ID (пусто чтобы пропустить): " tg_chat
     if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
         echo "Ошибка: POPM_STATIC_FEE должен быть числом!"; exit 1
     fi
@@ -89,9 +93,60 @@ export POPM_STATIC_FEE=${static_fee}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
 export POPM_BTC_ADDRESS='${btc_addr}'
+export BALANCE_MIN_USD='${min_usd:-$BALANCE_MIN_USD}'
+export TELEGRAM_BOT_TOKEN='${tg_token}'
+export TELEGRAM_CHAT_ID='${tg_chat}'
 EOF
     chmod 600 "$CONFIG_FILE"
     log "✅ Конфиг обновлен"
+}
+
+# Дополнение конфига при отсутствии переменных и запрос газа на запуск
+ensure_config_and_runtime_gas() {
+    source "$CONFIG_FILE"
+    local changed=0
+
+    if [ -z "${POPM_BTC_ADDRESS:-}" ]; then
+        read -p "BTC-адрес для мониторинга баланса (пусто чтобы пропустить): " x_btc_addr
+        export POPM_BTC_ADDRESS="$x_btc_addr"; changed=1
+    fi
+    if [ -z "${BALANCE_MIN_USD:-}" ]; then
+        read -p "Минимальный баланс в USD для работы (по умолчанию ${BALANCE_MIN_USD}): " x_min_usd
+        export BALANCE_MIN_USD="${x_min_usd:-$BALANCE_MIN_USD}"; changed=1
+    fi
+    if [ -z "${TELEGRAM_BOT_TOKEN:-}" ]; then
+        read -p "Telegram BOT TOKEN (пусто чтобы пропустить): " x_tg_token
+        export TELEGRAM_BOT_TOKEN="$x_tg_token"; changed=1
+    fi
+    if [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
+        read -p "Telegram CHAT ID (пусто чтобы пропустить): " x_tg_chat
+        export TELEGRAM_CHAT_ID="$x_tg_chat"; changed=1
+    fi
+
+    # запрос газа на каждый запуск
+    echo ""
+    read -p "Укажите газ (sat/vB) для текущего запуска [текущий ${POPM_STATIC_FEE}]: " x_gas
+    if [[ "$x_gas" =~ ^[0-9]+$ ]]; then
+        export POPM_STATIC_FEE="$x_gas"
+        changed=1
+    fi
+
+    if [ "$changed" -eq 1 ]; then
+        umask 077
+        cat > "$CONFIG_FILE" <<EOF
+#!/bin/bash
+export POPM_BTC_PRIVKEY='${POPM_BTC_PRIVKEY}'
+export POPM_STATIC_FEE=${POPM_STATIC_FEE}
+export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
+export POPM_BTC_CHAIN_NAME=mainnet
+export POPM_BTC_ADDRESS='${POPM_BTC_ADDRESS}'
+export BALANCE_MIN_USD='${BALANCE_MIN_USD}'
+export TELEGRAM_BOT_TOKEN='${TELEGRAM_BOT_TOKEN}'
+export TELEGRAM_CHAT_ID='${TELEGRAM_CHAT_ID}'
+EOF
+        chmod 600 "$CONFIG_FILE"
+        log "✅ Конфиг обновлен (добавлены недостающие параметры/газ)"
+    fi
 }
 
 safe_curl() {
@@ -351,6 +406,24 @@ start_once_per_block_with_cooldown() {
         fi
 
         if { [ "$in_block_window" -eq 1 ] && [ "$low_streak" -ge "$START_STREAK_K" ]; } || [ "$long_ok" -eq 1 ]; then
+            # Простое окно 2 BTC-блоков: фиксируем первый блок и проверяем смещение
+            if [ ! -f "$FIRST_PUB_BLOCK_FILE" ]; then
+                echo "$current_block" > "$FIRST_PUB_BLOCK_FILE"
+                log "POP100(simple): зафиксирован первый блок окна: $current_block"
+            fi
+            first_pub_block=$(cat "$FIRST_PUB_BLOCK_FILE" 2>/dev/null || echo "")
+            if ! [[ "$first_pub_block" =~ ^[0-9]+$ ]]; then
+                echo "$current_block" > "$FIRST_PUB_BLOCK_FILE"
+                first_pub_block="$current_block"
+            fi
+            win_offset=$((current_block - first_pub_block))
+            if [ "$win_offset" -gt 1 ]; then
+                log "POP100(simple): окно закрыто (first=$first_pub_block, offset=$win_offset). Ждём следующий блок..."
+                rm -f "$FIRST_PUB_BLOCK_FILE"
+                wait_for_new_block
+                last_tip=$(get_tip_block); last_tip_time=$(date +%s); low_streak=0
+                continue
+            fi
             log "Газ в норме, запускаем майнер..."
             echo "$current_block" > "$LAST_BLOCK_FILE"
             ./popmd > "$LOG_FILE" 2>&1 &
@@ -372,6 +445,7 @@ start_once_per_block_with_cooldown() {
             # После завершения — ожидаем следующий блок, чтобы не повторять в том же блоке
             log "Завершили попытку на блок $current_block. Ждём следующий блок..."
             wait_for_new_block
+            rm -f "$FIRST_PUB_BLOCK_FILE"
             last_tip=$(get_tip_block); last_tip_time=$(date +%s); low_streak=0
         else
             if [ "$LONG_LOW_MINUTES" -gt 0 ] && [ "$low_since_ts" -gt 0 ]; then
@@ -429,6 +503,19 @@ monitor_gas_and_stop() {
                 fi
             fi
         fi
+
+        # Мониторинг простого окна: если окно закрыто во время ожидания — сбрасываем
+        if [ -f "$FIRST_PUB_BLOCK_FILE" ]; then
+            fpb=$(cat "$FIRST_PUB_BLOCK_FILE" 2>/dev/null || echo "")
+            if [[ "$fpb" =~ ^[0-9]+$ ]]; then
+                off_chk=$((current_block - fpb))
+                if [ "$off_chk" -gt 1 ]; then
+                    log "POP100(simple): окно закрыто в ожидании (first=$fpb, offset=$off_chk). Сбрасываем окно."
+                    rm -f "$FIRST_PUB_BLOCK_FILE"
+                fi
+            fi
+        fi
+
         sleep 30
     done
 }
@@ -449,6 +536,9 @@ if [ ! -f "$CONFIG_FILE" ]; then
 else
     log "Конфиг найден, пропускаем настройку."
 fi
+
+# Уточняем недостающие параметры и запрашиваем газ для текущего запуска
+ensure_config_and_runtime_gas
 
 # Запуск двух задач в одном скрипте: монитор и основной цикл
 log "Старт мониторинга газа..."
