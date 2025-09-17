@@ -23,7 +23,7 @@ HYST_DELTA="${HYST_DELTA:-1}"
 HYST_RATIO="${HYST_RATIO:-0}"
 SMOOTH_M="${SMOOTH_M:-5}"
 START_STREAK_K="${START_STREAK_K:-3}"
-BLOCK_WINDOW_SEC="${BLOCK_WINDOW_SEC:-60}"
+BLOCK_WINDOW_SEC="${BLOCK_WINDOW_SEC:-0}"
 FEE_HISTORY_FILE="$MINER_DIR/.fee_history"
 
 # Длинное устойчиво низкое окно (минуты) для старта вне блока
