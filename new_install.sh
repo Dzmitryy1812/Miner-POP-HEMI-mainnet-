@@ -25,7 +25,6 @@ SMOOTH_M="${SMOOTH_M:-5}"
 START_STREAK_K="${START_STREAK_K:-3}"
 BLOCK_WINDOW_SEC="${BLOCK_WINDOW_SEC:-0}"
 FEE_HISTORY_FILE="$MINER_DIR/.fee_history"
-FIRST_PUB_BLOCK_FILE="$MINER_DIR/.first_pub_block"
 
 # Telegram уведомления (опционально)
 TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
@@ -406,24 +405,6 @@ start_once_per_block_with_cooldown() {
         fi
 
         if { [ "$in_block_window" -eq 1 ] && [ "$low_streak" -ge "$START_STREAK_K" ]; } || [ "$long_ok" -eq 1 ]; then
-            # Простое окно 2 BTC-блоков: фиксируем первый блок и проверяем смещение
-            if [ ! -f "$FIRST_PUB_BLOCK_FILE" ]; then
-                echo "$current_block" > "$FIRST_PUB_BLOCK_FILE"
-                log "POP100(simple): зафиксирован первый блок окна: $current_block"
-            fi
-            first_pub_block=$(cat "$FIRST_PUB_BLOCK_FILE" 2>/dev/null || echo "")
-            if ! [[ "$first_pub_block" =~ ^[0-9]+$ ]]; then
-                echo "$current_block" > "$FIRST_PUB_BLOCK_FILE"
-                first_pub_block="$current_block"
-            fi
-            win_offset=$((current_block - first_pub_block))
-            if [ "$win_offset" -gt 1 ]; then
-                log "POP100(simple): окно закрыто (first=$first_pub_block, offset=$win_offset). Ждём следующий блок..."
-                rm -f "$FIRST_PUB_BLOCK_FILE"
-                wait_for_new_block
-                last_tip=$(get_tip_block); last_tip_time=$(date +%s); low_streak=0
-                continue
-            fi
             log "Газ в норме, запускаем майнер..."
             echo "$current_block" > "$LAST_BLOCK_FILE"
             ./popmd > "$LOG_FILE" 2>&1 &
@@ -445,7 +426,6 @@ start_once_per_block_with_cooldown() {
             # После завершения — ожидаем следующий блок, чтобы не повторять в том же блоке
             log "Завершили попытку на блок $current_block. Ждём следующий блок..."
             wait_for_new_block
-            rm -f "$FIRST_PUB_BLOCK_FILE"
             last_tip=$(get_tip_block); last_tip_time=$(date +%s); low_streak=0
         else
             if [ "$LONG_LOW_MINUTES" -gt 0 ] && [ "$low_since_ts" -gt 0 ]; then
