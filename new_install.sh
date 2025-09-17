@@ -26,6 +26,13 @@ START_STREAK_K="${START_STREAK_K:-3}"
 BLOCK_WINDOW_SEC="${BLOCK_WINDOW_SEC:-0}"
 FEE_HISTORY_FILE="$MINER_DIR/.fee_history"
 
+# Telegram уведомления (опционально)
+TELEGRAM_BOT_TOKEN="${TELEGRAM_BOT_TOKEN:-}"
+TELEGRAM_CHAT_ID="${TELEGRAM_CHAT_ID:-}"
+
+# Мониторинг баланса (опционально)
+BALANCE_MIN_USD="${BALANCE_MIN_USD:-10}"
+
 # Длинное устойчиво низкое окно (минуты) для старта вне блока
 LONG_LOW_MINUTES="${LONG_LOW_MINUTES:-0}" # 0 = выключено
 
@@ -70,6 +77,7 @@ write_config() {
     echo "===== Настройка майнера ====="
     read -s -p "Введите ваш приватный ключ BTC: " btc_key; echo
     read -p "Введите POPM_STATIC_FEE (например 1): " static_fee
+    read -p "Необязательно: BTC-адрес для мониторинга баланса (пусто чтобы пропустить): " btc_addr
     if ! [[ "$static_fee" =~ ^[0-9]+$ ]]; then
         echo "Ошибка: POPM_STATIC_FEE должен быть числом!"; exit 1
     fi
@@ -80,6 +88,7 @@ export POPM_BTC_PRIVKEY='${btc_key}'
 export POPM_STATIC_FEE=${static_fee}
 export POPM_BFG_URL=wss://pop.hemi.network/v1/ws/public
 export POPM_BTC_CHAIN_NAME=mainnet
+export POPM_BTC_ADDRESS='${btc_addr}'
 EOF
     chmod 600 "$CONFIG_FILE"
     log "✅ Конфиг обновлен"
@@ -95,6 +104,64 @@ get_tip_block() {
 
 get_fastest_fee() {
     safe_curl https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null || echo ""
+}
+
+send_tg() {
+    # использует TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID
+    if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then return; fi
+    local text="$1"
+    local url="https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage"
+    safe_curl -X POST -H 'Content-Type: application/json' \
+        -d "{\"chat_id\":\"${TELEGRAM_CHAT_ID}\",\"text\":\"${text//\"/\\\"}\"}" "$url" >/dev/null 2>&1 || true
+}
+
+# Цены и баланс
+get_btc_price_usd() {
+    # mempool.space prices
+    safe_curl https://mempool.space/api/v1/prices | jq -r '.USD' 2>/dev/null || echo ""
+}
+
+get_address_balance_sats() {
+    local addr="$1"
+    [ -z "$addr" ] && echo "" && return
+    local js
+    js=$(safe_curl "https://mempool.space/api/address/${addr}" || echo "")
+    if [ -z "$js" ]; then echo ""; return; fi
+    # chain + mempool (эффективный баланс)
+    echo "$js" | jq -r '(.chain_stats.funded_txo_sum - .chain_stats.spent_txo_sum) + (.mempool_stats.funded_txo_sum - .mempool_stats.spent_txo_sum)' 2>/dev/null
+}
+
+get_balance_usd() {
+    local addr="$1"
+    local sats price usd
+    sats=$(get_address_balance_sats "$addr")
+    price=$(get_btc_price_usd)
+    if ! [[ "$sats" =~ ^[0-9]+$ ]] || ! [[ "$price" =~ ^[0-9]+(\.[0-9]+)?$ ]]; then echo ""; return; fi
+    # usd = sats * 1e-8 * price
+    usd=$(awk -v s="$sats" -v p="$price" 'BEGIN{printf("%.2f", s/100000000.0*p)}')
+    echo "$usd"
+}
+
+balance_guard_or_wait() {
+    # если адрес задан и баланс в USD < порога, останавливаем майнер (если запущен) и ждём нового блока
+    local addr="$POPM_BTC_ADDRESS"
+    if [ -z "$addr" ]; then return 0; fi
+    local usd
+    usd=$(get_balance_usd "$addr")
+    if [ -z "$usd" ]; then return 0; fi
+    log "[баланс] ${usd} USD (порог ${BALANCE_MIN_USD} USD)"
+    # сравнение с порогом
+    below=$(awk -v u="$usd" -v m="$BALANCE_MIN_USD" 'BEGIN{print (u<m)?1:0}')
+    if [ "$below" -eq 1 ]; then
+        log "Баланс ниже порога, останавливаем майнер и ждём следующий блок"
+        stop_miner_if_running
+        tip=$(get_tip_block)
+        if [[ "$tip" =~ ^[0-9]+$ ]]; then echo "$tip" > "$LAST_BLOCK_FILE"; fi
+        touch "$WAIT_NEXT_FLAG"
+        send_tg "[HEMI] Низкий баланс: ${usd} USD < ${BALANCE_MIN_USD} USD. Майнер остановлен до следующего блока."
+        return 1
+    fi
+    return 0
 }
 
 add_fee_sample() {
@@ -277,6 +344,12 @@ start_once_per_block_with_cooldown() {
             if [ $((now_ts - low_since_ts)) -ge "$need" ]; then long_ok=1; fi
         fi
 
+        # проверка баланса перед запуском
+        if ! balance_guard_or_wait; then
+            sleep 30
+            continue
+        fi
+
         if { [ "$in_block_window" -eq 1 ] && [ "$low_streak" -ge "$START_STREAK_K" ]; } || [ "$long_ok" -eq 1 ]; then
             log "Газ в норме, запускаем майнер..."
             echo "$current_block" > "$LAST_BLOCK_FILE"
@@ -293,6 +366,7 @@ start_once_per_block_with_cooldown() {
             if [[ "$txid" =~ ^[a-f0-9]{64}$ ]]; then
                 log "TXID: $txid"
                 log "Ссылка: https://mempool.space/tx/$txid"
+                send_tg "[HEMI] Успешная TX: $txid\nhttps://mempool.space/tx/$txid"
             fi
 
             # После завершения — ожидаем следующий блок, чтобы не повторять в том же блоке
