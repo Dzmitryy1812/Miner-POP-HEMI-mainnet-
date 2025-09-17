@@ -15,6 +15,17 @@ LOG_FILE="$MINER_DIR/miner_output.log"
 # Время кулдауна (больше не используется, оставлено для совместимости)
 COOLDOWN_SECONDS="${COOLDOWN_SECONDS:-600}"
 
+# Динамический порог, гистерезис и сглаживание
+DYN_ENABLED="${DYN_ENABLED:-1}"
+DYN_P="${DYN_P:-25}"
+DYN_N="${DYN_N:-50}"
+HYST_DELTA="${HYST_DELTA:-1}"
+HYST_RATIO="${HYST_RATIO:-0}"
+SMOOTH_M="${SMOOTH_M:-5}"
+START_STREAK_K="${START_STREAK_K:-3}"
+BLOCK_WINDOW_SEC="${BLOCK_WINDOW_SEC:-60}"
+FEE_HISTORY_FILE="$MINER_DIR/.fee_history"
+
 # Требуемые утилиты
 PACKAGES="jq curl wget unzip nano"
 
@@ -83,6 +94,66 @@ get_fastest_fee() {
     safe_curl https://mempool.space/api/v1/fees/recommended | jq -r '.fastestFee' 2>/dev/null || echo ""
 }
 
+add_fee_sample() {
+    local fee="$1"
+    [ -z "$fee" ] && return
+    echo "$fee" >> "$FEE_HISTORY_FILE"
+    # обрезаем до DYN_N последних строк
+    local lines
+    lines=$(wc -l < "$FEE_HISTORY_FILE" 2>/dev/null || echo 0)
+    if [ "$lines" -gt "$DYN_N" ]; then
+        tail -n "$DYN_N" "$FEE_HISTORY_FILE" > "${FEE_HISTORY_FILE}.tmp" && mv "${FEE_HISTORY_FILE}.tmp" "$FEE_HISTORY_FILE"
+    fi
+}
+
+percentile_fee() {
+    local p="$1"
+    [ ! -s "$FEE_HISTORY_FILE" ] && echo "" && return
+    mapfile -t arr < <(sort -n "$FEE_HISTORY_FILE")
+    local n="${#arr[@]}"
+    if [ "$n" -eq 0 ]; then echo ""; return; fi
+    local idx
+    idx=$(awk -v p="$p" -v n="$n" 'BEGIN{v=p/100.0*n; if (v<1) v=1; printf("%d",(v==int(v)?v:v+1))}')
+    echo "${arr[$((idx-1))]}"
+}
+
+median_of_last_m() {
+    local m="$1"
+    [ ! -s "$FEE_HISTORY_FILE" ] && echo "" && return
+    mapfile -t last < <(tail -n "$m" "$FEE_HISTORY_FILE" | sort -n)
+    local n="${#last[@]}"
+    if [ "$n" -eq 0 ]; then echo ""; return; fi
+    local mid=$((n/2))
+    if [ $((n % 2)) -eq 1 ]; then
+        echo "${last[$mid]}"
+    else
+        # округляем вверх
+        awk -v a="${last[$((mid-1))]}" -v b="${last[$mid]}" 'BEGIN{printf("%d", int(((a+b)/2.0)+0.9999))}'
+    fi
+}
+
+compute_thresholds() {
+    local static="$POPM_STATIC_FEE"
+    local dyn="$static"
+    if [ "$DYN_ENABLED" = "1" ]; then
+        local px
+        px=$(percentile_fee "$DYN_P")
+        if [[ "$px" =~ ^[0-9]+$ ]]; then
+            dyn="$px"
+        fi
+    fi
+    local T_start
+    if [ "$dyn" -lt "$static" ]; then T_start="$dyn"; else T_start="$static"; fi
+
+    local stop_delta=$((T_start + HYST_DELTA))
+    local stop_ratio
+    stop_ratio=$(awk -v t="$T_start" -v r="$HYST_RATIO" 'BEGIN{printf("%d", (t*(1.0+r))+0.9999)}')
+    local T_stop="$stop_delta"
+    if [ "$stop_ratio" -gt "$T_stop" ]; then T_stop="$stop_ratio"; fi
+
+    echo "$T_start $T_stop"
+}
+
 wait_for_new_block() {
     local last_block=""
     last_block=$(get_tip_block)
@@ -123,12 +194,22 @@ start_once_per_block_with_cooldown() {
     cd "$MINER_DIR"
     chmod +x ./popmd || true
 
+    # отслеживание окна после нового блока
+    local last_tip=""
+    local last_tip_time=0
+    last_tip=$(get_tip_block)
+    if [[ "$last_tip" =~ ^[0-9]+$ ]]; then last_tip_time=$(date +%s); fi
+
+    local low_streak=0
+
     while true; do
         # уважаем ожидание нового блока (вместо жёсткого кулдауна)
         if [ -f "$WAIT_NEXT_FLAG" ]; then
             log "Ожидание следующего блока перед новой попыткой..."
             rm -f "$WAIT_NEXT_FLAG"
             wait_for_new_block
+            last_tip=$(get_tip_block); last_tip_time=$(date +%s)
+            low_streak=0
         fi
 
         # газ
@@ -138,7 +219,13 @@ start_once_per_block_with_cooldown() {
             sleep 30
             continue
         fi
-        log "Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
+        add_fee_sample "$gas_price"
+
+        read T_START T_STOP < <(compute_thresholds)
+        smooth_fee=$(median_of_last_m "$SMOOTH_M")
+        [ -z "$smooth_fee" ] && smooth_fee="$gas_price"
+
+        log "Газ: current=$gas_price, median=${smooth_fee} sat/vB; Пороги: старт=${T_START}, стоп=${T_STOP} (static=$POPM_STATIC_FEE, p${DYN_P}/N=${DYN_N})"
 
         # номер блока
         current_block=$(get_tip_block)
@@ -146,6 +233,11 @@ start_once_per_block_with_cooldown() {
             log "Не удалось получить текущий блок. Повтор через 30 сек..."
             sleep 30
             continue
+        fi
+        # детект нового блока и окно
+        if [ "$current_block" != "$last_tip" ]; then
+            last_tip="$current_block"; last_tip_time=$(date +%s); low_streak=0
+            log "Новый блок обнаружен в основном цикле: $current_block"
         fi
         last_attempt_block=-1
         if [ -f "$LAST_BLOCK_FILE" ]; then
@@ -157,7 +249,21 @@ start_once_per_block_with_cooldown() {
             continue
         fi
 
-        if [ "$gas_price" -le "$POPM_STATIC_FEE" ]; then
+        # проверка окна после нового блока
+        now_ts=$(date +%s)
+        in_block_window=0
+        if [ "$BLOCK_WINDOW_SEC" -le 0 ]; then in_block_window=1; else
+            if [ $((now_ts - last_tip_time)) -le "$BLOCK_WINDOW_SEC" ]; then in_block_window=1; fi
+        fi
+
+        # streak по сглаженному значению
+        if [ "$smooth_fee" -le "$T_START" ]; then
+            low_streak=$((low_streak + 1))
+        else
+            low_streak=0
+        fi
+
+        if [ "$in_block_window" -eq 1 ] && [ "$low_streak" -ge "$START_STREAK_K" ]; then
             log "Газ в норме, запускаем майнер..."
             echo "$current_block" > "$LAST_BLOCK_FILE"
             ./popmd > "$LOG_FILE" 2>&1 &
@@ -178,8 +284,9 @@ start_once_per_block_with_cooldown() {
             # После завершения — ожидаем следующий блок, чтобы не повторять в том же блоке
             log "Завершили попытку на блок $current_block. Ждём следующий блок..."
             wait_for_new_block
+            last_tip=$(get_tip_block); last_tip_time=$(date +%s); low_streak=0
         else
-            log "Газ слишком высокий, продолжаем ожидание..."
+            log "Условия старта не выполнены (window=${in_block_window}, streak=${low_streak}/${START_STREAK_K}). Продолжаем ожидание..."
             sleep 30
         fi
     done
@@ -194,8 +301,12 @@ monitor_gas_and_stop() {
             sleep 30
             continue
         fi
-        log "[монитор] Газ: $gas_price sat/vB (Порог: $POPM_STATIC_FEE sat/vB)"
-        if [ "$gas_price" -gt "$POPM_STATIC_FEE" ]; then
+        add_fee_sample "$gas_price"
+        read T_START T_STOP < <(compute_thresholds)
+        smooth_fee=$(median_of_last_m "$SMOOTH_M")
+        [ -z "$smooth_fee" ] && smooth_fee="$gas_price"
+        log "[монитор] Газ: current=$gas_price, median=${smooth_fee} sat/vB; Пороги: старт=${T_START}, стоп=${T_STOP}"
+        if [ "$smooth_fee" -ge "$T_STOP" ]; then
             if [ -f "$PID_FILE" ]; then
                 pid=$(cat "$PID_FILE" 2>/dev/null || echo "")
                 if [ -n "$pid" ] && ps -p "$pid" >/dev/null 2>&1; then
