@@ -26,6 +26,9 @@ START_STREAK_K="${START_STREAK_K:-3}"
 BLOCK_WINDOW_SEC="${BLOCK_WINDOW_SEC:-60}"
 FEE_HISTORY_FILE="$MINER_DIR/.fee_history"
 
+# Длинное устойчиво низкое окно (минуты) для старта вне блока
+LONG_LOW_MINUTES="${LONG_LOW_MINUTES:-0}" # 0 = выключено
+
 # Требуемые утилиты
 PACKAGES="jq curl wget unzip nano"
 
@@ -201,6 +204,7 @@ start_once_per_block_with_cooldown() {
     if [[ "$last_tip" =~ ^[0-9]+$ ]]; then last_tip_time=$(date +%s); fi
 
     local low_streak=0
+    local low_since_ts=0
 
     while true; do
         # уважаем ожидание нового блока (вместо жёсткого кулдауна)
@@ -259,11 +263,21 @@ start_once_per_block_with_cooldown() {
         # streak по сглаженному значению
         if [ "$smooth_fee" -le "$T_START" ]; then
             low_streak=$((low_streak + 1))
+            if [ "$low_since_ts" -eq 0 ]; then low_since_ts=$(date +%s); fi
         else
             low_streak=0
+            low_since_ts=0
         fi
 
-        if [ "$in_block_window" -eq 1 ] && [ "$low_streak" -ge "$START_STREAK_K" ]; then
+        # Доп. условие: длительно низкий газ вне окна блока
+        long_ok=0
+        if [ "$LONG_LOW_MINUTES" -gt 0 ] && [ "$low_since_ts" -gt 0 ]; then
+            now_ts=$(date +%s)
+            need=$((LONG_LOW_MINUTES*60))
+            if [ $((now_ts - low_since_ts)) -ge "$need" ]; then long_ok=1; fi
+        fi
+
+        if { [ "$in_block_window" -eq 1 ] && [ "$low_streak" -ge "$START_STREAK_K" ]; } || [ "$long_ok" -eq 1 ]; then
             log "Газ в норме, запускаем майнер..."
             echo "$current_block" > "$LAST_BLOCK_FILE"
             ./popmd > "$LOG_FILE" 2>&1 &
@@ -286,7 +300,12 @@ start_once_per_block_with_cooldown() {
             wait_for_new_block
             last_tip=$(get_tip_block); last_tip_time=$(date +%s); low_streak=0
         else
-            log "Условия старта не выполнены (window=${in_block_window}, streak=${low_streak}/${START_STREAK_K}). Продолжаем ожидание..."
+            if [ "$LONG_LOW_MINUTES" -gt 0 ] && [ "$low_since_ts" -gt 0 ]; then
+                now_ts=$(date +%s); passed=$((now_ts - low_since_ts)); need=$((LONG_LOW_MINUTES*60))
+                log "Условия старта не выполнены (window=${in_block_window}, streak=${low_streak}/${START_STREAK_K}, low_for=${passed}s/${need}s). Продолжаем ожидание..."
+            else
+                log "Условия старта не выполнены (window=${in_block_window}, streak=${low_streak}/${START_STREAK_K}). Продолжаем ожидание..."
+            fi
             sleep 30
         fi
     done
